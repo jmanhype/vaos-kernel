@@ -163,15 +163,16 @@ func (r *Registry) ListAll() []models.Agent {
 // UpdateAgentState changes the state of an agent and notifies callbacks.
 func (r *Registry) UpdateAgentState(agentID string, newState models.AgentState) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	agent, ok := r.agents[agentID]
 	if !ok {
+		r.mu.Unlock()
 		return errors.New("update agent state: agent not found")
 	}
 
 	oldState := agent.State
 	if oldState == newState {
+		r.mu.Unlock()
 		return nil // No change, no notification
 	}
 
@@ -180,15 +181,14 @@ func (r *Registry) UpdateAgentState(agentID string, newState models.AgentState) 
 	agent.LastActive = time.Now()
 	r.agents[agentID] = agent
 
-	// Notify callbacks outside the lock to prevent deadlock
+	// Copy callbacks and release lock before invoking them to prevent deadlock
 	callbacks := make([]StateChangeCallback, len(r.stateCallbacks))
 	copy(callbacks, r.stateCallbacks)
-
 	r.mu.Unlock()
+
 	for _, callback := range callbacks {
 		callback(agentID, oldState, newState)
 	}
-	r.mu.Lock()
 
 	return nil
 }
@@ -196,10 +196,10 @@ func (r *Registry) UpdateAgentState(agentID string, newState models.AgentState) 
 // UpdateAgent updates multiple fields of an agent at once.
 func (r *Registry) UpdateAgent(agentID string, updates map[string]interface{}) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	agent, ok := r.agents[agentID]
 	if !ok {
+		r.mu.Unlock()
 		return errors.New("update agent: agent not found")
 	}
 
@@ -229,6 +229,7 @@ func (r *Registry) UpdateAgent(agentID string, updates map[string]interface{}) e
 	}
 
 	if !updated {
+		r.mu.Unlock()
 		return errors.New("update agent: no valid fields to update")
 	}
 
@@ -236,16 +237,21 @@ func (r *Registry) UpdateAgent(agentID string, updates map[string]interface{}) e
 	agent.LastActive = time.Now()
 	r.agents[agentID] = agent
 
-	// Notify callbacks if state changed
-	if agent.State != oldState {
-		callbacks := make([]StateChangeCallback, len(r.stateCallbacks))
+	// Copy callbacks and check state change before releasing lock
+	var callbacks []StateChangeCallback
+	stateChanged := agent.State != oldState
+	if stateChanged {
+		callbacks = make([]StateChangeCallback, len(r.stateCallbacks))
 		copy(callbacks, r.stateCallbacks)
+	}
+	newState := agent.State
+	r.mu.Unlock()
 
-		r.mu.Unlock()
+	// Notify callbacks outside the lock
+	if stateChanged {
 		for _, callback := range callbacks {
-			callback(agentID, oldState, agent.State)
+			callback(agentID, oldState, newState)
 		}
-		r.mu.Lock()
 	}
 
 	return nil

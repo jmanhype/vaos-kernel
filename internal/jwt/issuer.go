@@ -38,7 +38,7 @@ func NewIssuer(signingKey []byte, registry *nhi.Registry) (*Issuer, error) {
 	return &Issuer{
 		signingKey: signingKey,
 		registry:   registry,
-		clock:      time.Now().UTC,
+		clock:      func() time.Time { return time.Now().UTC() },
 	}, nil
 }
 

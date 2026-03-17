@@ -29,7 +29,7 @@ func NewLedger(writer io.Writer) *Ledger {
 	}
 	return &Ledger{
 		logger: log.New(writer, "", 0),
-		clock:  time.Now().UTC,
+		clock:  func() time.Time { return time.Now().UTC() },
 	}
 }
 

@@ -72,6 +72,9 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	data, _ := json.Marshal(welcome)
 	conn.WriteMessage(websocket.TextMessage, data)
 
+	// Auto-send agent list on connect
+	s.handleListAgents(client)
+
 	go s.readPump(client)
 	go s.writePump(client)
 }
@@ -201,14 +204,17 @@ func (s *Server) handleListAgents(client *Client) {
 		agentInfos[i] = map[string]interface{}{
 			"id":              agent.ID,
 			"name":            agent.Name,
+			"persona":         agent.Persona,
+			"state":           int(agent.State),
 			"roles":           agent.Roles,
 			"capabilities":     agent.Capabilities,
 			"reputation_score": agent.ReputationScore,
+			"metadata":        agent.Metadata,
 		}
 	}
 
 	s.sendMessage(client, map[string]interface{}{
-		"type": "list_agents_response",
+		"type": "list_agents",
 		"payload": map[string]interface{}{
 			"agents": agentInfos,
 		},
