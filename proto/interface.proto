@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package vaos.kernel.interface.v1;
+
+option go_package = "vaos-kernel/internal/grpc/gen/interfacev1";
+
+message InterfaceDispatchRequest {
+  string agent_id = 1;
+  string token = 2;
+  string action = 3;
+  string resource = 4;
+  map<string, string> parameters = 5;
+}
+
+message InterfaceDispatchResponse {
+  string execution_id = 1;
+  string status = 2;
+  string rendered_output = 3;
+}
+
+service InterfaceService {
+  rpc Dispatch(InterfaceDispatchRequest) returns (InterfaceDispatchResponse);
+}
+
