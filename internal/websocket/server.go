@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"vaos-kernel/internal/nhi"
+	"vaos-kernel/pkg/models"
 )
 
 var upgrader = websocket.Upgrader{
@@ -32,10 +33,15 @@ type Client struct {
 }
 
 func NewServer(registry *nhi.Registry) *Server {
-	return &Server{
+	server := &Server{
 		registry: registry,
 		clients:  make(map[string]*Client),
 	}
+
+	// Subscribe to registry state change notifications
+	registry.OnStateChange(server.handleAgentStateChange)
+
+	return server
 }
 
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -325,4 +331,35 @@ func (s *Server) BroadcastTelemetry(agentID string, telemetry map[string]interfa
 
 func generateClientID() string {
 	return fmt.Sprintf("client-%d-%d", time.Now().Unix(), time.Now().UnixNano()%1000)
+}
+
+func (s *Server) handleAgentStateChange(agentID string, oldState, newState models.AgentState) {
+	agent, err := s.registry.GetAgent(agentID)
+	if err != nil {
+		log.Printf("Failed to get agent for state change: %v", err)
+		return
+	}
+
+	// Broadcast state update to all connected clients
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	agentInfo := map[string]interface{}{
+		"id":              agent.ID,
+		"name":            agent.Name,
+		"persona":         agent.Persona,
+		"state":           int(agent.State),
+		"roles":           agent.Roles,
+		"capabilities":     agent.Capabilities,
+		"reputation_score": agent.ReputationScore,
+		"metadata":        agent.Metadata,
+		"last_active":     agent.LastActive.Unix(),
+	}
+
+	for _, client := range s.clients {
+		s.sendMessage(client, map[string]interface{}{
+			"type": "state_update",
+			"payload": agentInfo,
+		})
+	}
 }

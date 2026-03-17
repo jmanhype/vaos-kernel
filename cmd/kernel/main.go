@@ -18,9 +18,12 @@ import (
 
 func main() {
 	registry := nhi.NewRegistry()
+
+	// Register bootstrap agent (kernel system agent)
 	if err := registry.RegisterAgent(models.Agent{
 		ID:   "bootstrap-agent",
 		Name: "Bootstrap Agent",
+		State: models.AgentStateIdle,
 		Roles: []models.Role{{
 			Name:        "kernel",
 			Description: "Kernel bootstrap role",
@@ -28,6 +31,37 @@ func main() {
 		ReputationScore: 1,
 	}); err != nil {
 		log.Fatalf("register bootstrap agent: %v", err)
+	}
+
+	// Register Zoe (OpenClaw orchestrator agent)
+	if err := registry.RegisterAgent(models.Agent{
+		ID:      "zoe",
+		Name:    "Zoe",
+		Persona: "AI orchestrator running an agent swarm",
+		State:   models.AgentStateIdle,
+		Roles: []models.Role{{
+			Name:         "orchestrator",
+			Description:  "Routes tasks to specialist agents and manages the swarm",
+			Capabilities: []models.Capability{
+				{Name: "spawn-agents", Description: "Create new sub-agent processes"},
+				{Name: "route-tasks", Description: "Delegate tasks to appropriate agents"},
+				{Name: "manage-workspace", Description: "Read/write files and run commands"},
+			},
+		}},
+		Capabilities: []models.Capability{
+			{Name: "spawn-agents", Description: "Create new sub-agent processes"},
+			{Name: "route-tasks", Description: "Delegate tasks to appropriate agents"},
+			{Name: "manage-workspace", Description: "Read/write files and run commands"},
+			{Name: "git-operations", Description: "Manage git repositories and PRs"},
+			{Name: "web-browsing", Description: "Browse the web and fetch content"},
+		},
+		ReputationScore: 1,
+		Metadata: map[string]string{
+			"system": "true",
+			"type":   "orchestrator",
+		},
+	}); err != nil {
+		log.Fatalf("register zoe agent: %v", err)
 	}
 
 	issuer, err := kjwt.NewIssuer([]byte("vaos-kernel-dev-signing-key"), registry)

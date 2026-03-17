@@ -8,12 +8,16 @@ import (
 	"vaos-kernel/pkg/models"
 )
 
+// StateChangeCallback is called when an agent's state changes.
+type StateChangeCallback func(agentID string, oldState, newState models.AgentState)
+
 // Registry keeps track of non-human identities, intent fingerprints, and JWT lifecycle state.
 type Registry struct {
 	mu                 sync.RWMutex
 	agents             map[string]models.Agent
 	intentFingerprints map[string]string
 	tokens             map[string]models.TokenRecord
+	stateCallbacks     []StateChangeCallback
 }
 
 // NewRegistry constructs an empty registry.
@@ -22,7 +26,15 @@ func NewRegistry() *Registry {
 		agents:             make(map[string]models.Agent),
 		intentFingerprints: make(map[string]string),
 		tokens:             make(map[string]models.TokenRecord),
+		stateCallbacks:      make([]StateChangeCallback, 0),
 	}
+}
+
+// OnStateChange registers a callback to be invoked when any agent's state changes.
+func (r *Registry) OnStateChange(callback StateChangeCallback) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stateCallbacks = append(r.stateCallbacks, callback)
 }
 
 // RegisterAgent stores or replaces an agent definition.
@@ -146,4 +158,95 @@ func (r *Registry) ListAll() []models.Agent {
 		agents = append(agents, agent)
 	}
 	return agents
+}
+
+// UpdateAgentState changes the state of an agent and notifies callbacks.
+func (r *Registry) UpdateAgentState(agentID string, newState models.AgentState) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	agent, ok := r.agents[agentID]
+	if !ok {
+		return errors.New("update agent state: agent not found")
+	}
+
+	oldState := agent.State
+	if oldState == newState {
+		return nil // No change, no notification
+	}
+
+	// Update state and last active time
+	agent.State = newState
+	agent.LastActive = time.Now()
+	r.agents[agentID] = agent
+
+	// Notify callbacks outside the lock to prevent deadlock
+	callbacks := make([]StateChangeCallback, len(r.stateCallbacks))
+	copy(callbacks, r.stateCallbacks)
+
+	r.mu.Unlock()
+	for _, callback := range callbacks {
+		callback(agentID, oldState, newState)
+	}
+	r.mu.Lock()
+
+	return nil
+}
+
+// UpdateAgent updates multiple fields of an agent at once.
+func (r *Registry) UpdateAgent(agentID string, updates map[string]interface{}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	agent, ok := r.agents[agentID]
+	if !ok {
+		return errors.New("update agent: agent not found")
+	}
+
+	oldState := agent.State
+	updated := false
+
+	// Update supported fields
+	if name, ok := updates["name"].(string); ok && name != "" {
+		agent.Name = name
+		updated = true
+	}
+	if persona, ok := updates["persona"].(string); ok {
+		agent.Persona = persona
+		updated = true
+	}
+	if state, ok := updates["state"].(models.AgentState); ok {
+		agent.State = state
+		updated = true
+	}
+	if metadata, ok := updates["metadata"].(map[string]string); ok {
+		agent.Metadata = metadata
+		updated = true
+	}
+	if capabilities, ok := updates["capabilities"].([]models.Capability); ok {
+		agent.Capabilities = capabilities
+		updated = true
+	}
+
+	if !updated {
+		return errors.New("update agent: no valid fields to update")
+	}
+
+	// Update last active time on any change
+	agent.LastActive = time.Now()
+	r.agents[agentID] = agent
+
+	// Notify callbacks if state changed
+	if agent.State != oldState {
+		callbacks := make([]StateChangeCallback, len(r.stateCallbacks))
+		copy(callbacks, r.stateCallbacks)
+
+		r.mu.Unlock()
+		for _, callback := range callbacks {
+			callback(agentID, oldState, agent.State)
+		}
+		r.mu.Lock()
+	}
+
+	return nil
 }
