@@ -135,3 +135,15 @@ func (r *Registry) Token(tokenID string) (models.TokenRecord, error) {
 	}
 	return record, nil
 }
+
+// ListAll returns all agents in the registry.
+func (r *Registry) ListAll() []models.Agent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	agents := make([]models.Agent, 0, len(r.agents))
+	for _, agent := range r.agents {
+		agents = append(agents, agent)
+	}
+	return agents
+}

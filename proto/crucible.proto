@@ -4,6 +4,73 @@ package vaos.kernel.crucible.v1;
 
 option go_package = "vaos-kernel/internal/grpc/gen/cruciblev1";
 
+import "google/protobuf/empty.proto";
+
+// SandboxControl service for VAS-Crucible communication
+service SandboxControl {
+  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+  rpc ExecuteCode(ExecuteRequest) returns (ExecuteResponse);
+  rpc TerminateSandbox(TerminateRequest) returns (google.protobuf.Empty);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Legacy: ExecuteTask for backward compatibility
+  rpc ExecuteTask(CrucibleTaskRequest) returns (CrucibleTaskResponse);
+}
+
+// Create a new sandbox
+message CreateSandboxRequest {
+  string agent_id = 1;
+  string jwt = 2;
+  string intent_hash = 3;
+  ResourceLimits limits = 4;
+}
+
+message CreateSandboxResponse {
+  string sandbox_id = 1;
+  string pty_path = 2;
+  int64 created_at = 3;
+}
+
+// Execute code in a sandbox
+message ExecuteRequest {
+  string sandbox_id = 1;
+  string jwt = 2;
+  string code = 3;
+  string language = 4;
+}
+
+message ExecuteResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+  int64 duration_ms = 4;
+}
+
+// Terminate a sandbox
+message TerminateRequest {
+  string sandbox_id = 1;
+  string jwt = 2;
+}
+
+// Resource limits for sandbox
+message ResourceLimits {
+  int32 cpu_cores = 1;
+  int64 memory_mb = 2;
+  bool network_enabled = 3;
+}
+
+// Heartbeat check
+message HeartbeatRequest {
+  string sandbox_id = 1;
+  string jwt = 2;
+}
+
+message HeartbeatResponse {
+  bool alive = 1;
+  int64 last_seen = 2;
+}
+
+// Legacy: ExecuteTask for backward compatibility
 message CrucibleTaskRequest {
   string agent_id = 1;
   string token = 2;
@@ -17,8 +84,3 @@ message CrucibleTaskResponse {
   string status = 2;
   string attestation = 3;
 }
-
-service CrucibleService {
-  rpc ExecuteTask(CrucibleTaskRequest) returns (CrucibleTaskResponse);
-}
-

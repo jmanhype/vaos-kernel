@@ -3,13 +3,16 @@ package main
 import (
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"sync"
 
 	"vaos-kernel/internal/audit"
-	"vaos-kernel/internal/grpc"
+	kgrpc "vaos-kernel/internal/grpc"
 	"vaos-kernel/internal/hash"
 	kjwt "vaos-kernel/internal/jwt"
 	"vaos-kernel/internal/nhi"
+	"vaos-kernel/internal/websocket"
 	"vaos-kernel/pkg/models"
 )
 
@@ -31,7 +34,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("create issuer: %v", err)
 	}
-	server, err := grpc.NewServer(grpc.Dependencies{
+	
+	server, err := kgrpc.NewServer(kgrpc.Dependencies{
 		Registry: registry,
 		Issuer:   issuer,
 		Hasher:   hash.Hasher{},
@@ -41,17 +45,52 @@ func main() {
 		log.Fatalf("create grpc server: %v", err)
 	}
 
-	addr := os.Getenv("VAOS_KERNEL_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8080"
-	}
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("listen: %v", err)
-	}
-	log.Printf("VAOS-Kernel listening on %s", addr)
-	if err := server.Serve(lis); err != nil {
-		log.Fatalf("serve: %v", err)
-	}
-}
+	// Create WebSocket server
+	wsServer := websocket.NewServer(registry)
 
+	// Start both servers
+	var wg sync.WaitGroup
+	
+	// gRPC server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		
+		grpcAddr := os.Getenv("VAOS_KERNEL_GRPC_ADDR")
+		if grpcAddr == "" {
+			grpcAddr = "127.0.0.1:50051"
+		}
+		lis, err := net.Listen("tcp", grpcAddr)
+		if err != nil {
+			log.Fatalf("listen gRPC: %v", err)
+		}
+		log.Printf("VAOS-Kernel gRPC listening on %s", grpcAddr)
+		if err := server.Serve(lis); err != nil {
+			log.Fatalf("serve gRPC: %v", err)
+		}
+	}()
+	
+	// WebSocket server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		
+		wsAddr := os.Getenv("VAOS_KERNEL_WS_ADDR")
+		if wsAddr == "" {
+			wsAddr = "127.0.0.1:8080"
+		}
+		
+		http.HandleFunc("/ws", wsServer.HandleWebSocket)
+		http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+		})
+		
+		log.Printf("VAOS-Kernel WebSocket listening on http://%s", wsAddr)
+		if err := http.ListenAndServe(wsAddr, nil); err != nil {
+			log.Fatalf("serve WebSocket: %v", err)
+		}
+	}()
+	
+	wg.Wait()
+}

@@ -1,9 +1,129 @@
 syntax = "proto3";
 
-package vaos.kernel.swarm.v1;
+package vaos.kernel;
 
-option go_package = "vaos-kernel/internal/grpc/gen/swarmv1";
+option go_package = "github.com/vaos/kernel/pkg/grpc";
 
+// Kernel Service for VAS-Swarm communication
+service KernelService {
+  // Request a JWT token for an agent action
+  rpc RequestToken(TokenRequest) returns (TokenResponse);
+
+  // Submit telemetry data from agent
+  rpc SubmitTelemetry(TelemetryRequest) returns (TelemetryResponse);
+
+  // Submit routing logs from Signal Theory classifier
+  rpc SubmitRoutingLog(RoutingLogRequest) returns (RoutingLogResponse);
+
+  // Confirm ALCOA+ audit trail
+  rpc ConfirmAudit(AuditConfirmation) returns (AuditResponse);
+
+  // Execute intent (legacy for backward compatibility)
+  rpc ExecuteIntent(SwarmIntentRequest) returns (SwarmIntentResponse);
+}
+
+// Request a JWT token for an action
+message TokenRequest {
+  string agent_id = 1;           // Agent making the request
+  string intent_hash = 2;        // SHA256 hash of the intent
+  string action_type = 3;        // Type of action (build, execute, etc.)
+  map<string, string> metadata = 4;  // Additional context
+}
+
+// Response with JWT token
+message TokenResponse {
+  string token = 1;              // JWT token
+  int64 expires_at = 2;         // Unix timestamp
+  string scope = 3;              // Token scope
+  string error = 4;             // Error message if failed
+}
+
+// Submit telemetry data
+message TelemetryRequest {
+  string agent_id = 1;
+  int64 timestamp = 2;
+
+  // Agent status
+  string status = 3;            // idle, busy, error
+  float cpu_usage = 4;
+  float memory_usage = 5;
+
+  // Performance metrics
+  int32 tasks_completed = 6;
+  int32 tasks_failed = 7;
+  float avg_task_duration = 8;  // seconds
+
+  // LLM usage
+  int32 tokens_used = 9;
+  float cost_estimate = 10;
+
+  // Additional metrics
+  map<string, string> custom_metrics = 11;
+}
+
+// Response to telemetry submission
+message TelemetryResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Submit routing logs from Signal Theory classifier
+message RoutingLogRequest {
+  string session_id = 1;
+  string agent_id = 2;
+  int64 timestamp = 3;
+
+  // Signal Theory 5-tuple
+  string mode = 4;              // BUILD, EXECUTE, ANALYZE, MAINTAIN, ASSIST
+  string genre = 5;             // DIRECT, INFORM, COMMIT, DECIDE, EXPRESS
+  string type = 6;              // question, request, issue, etc.
+  string format = 7;            // message, command, document, etc.
+  float weight = 8;             // 0.0 to 1.0
+  string confidence = 9;        // high, medium, low
+
+  // Routing decision
+  string tier = 10;             // elite, specialist, utility
+  string model = 11;
+  string provider = 12;
+  string intent_hash = 13;      // SHA256 hash of the message
+}
+
+// Response to routing log submission
+message RoutingLogResponse {
+  bool success = 1;
+  string message = 2;
+  string correlation_id = 3;    // ID for tracking this routing decision
+}
+
+// ALCOA+ audit confirmation
+message AuditConfirmation {
+  string agent_id = 1;
+  string action_id = 2;
+  string intent_hash = 3;
+  string jwt_token = 4;
+
+  // ALCOA+ attributes
+  bool attributable = 5;
+  bool legible = 6;
+  bool contemporaneous = 7;
+  bool original = 8;
+  bool accurate = 9;
+
+  // Additional compliance metadata
+  int64 performed_at = 10;
+  string performed_by = 11;
+  string method = 12;
+  map<string, string> context = 13;
+}
+
+// Response to audit confirmation
+message AuditResponse {
+  bool confirmed = 1;
+  string audit_id = 2;
+  string error = 3;
+}
+
+// Legacy: Swarm intent execution (backward compatibility)
 message SwarmIntentRequest {
   string agent_id = 1;
   string token = 2;
@@ -17,8 +137,3 @@ message SwarmIntentResponse {
   string status = 2;
   string detail = 3;
 }
-
-service SwarmService {
-  rpc ExecuteIntent(SwarmIntentRequest) returns (SwarmIntentResponse);
-}
-
