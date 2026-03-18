@@ -369,3 +369,27 @@ func (s *Server) handleAgentStateChange(agentID string, oldState, newState model
 		})
 	}
 }
+
+// BroadcastEvent forwards an AMQP event to all connected WebSocket clients.
+// Used by the Kernel's AMQP consumer to proxy Swarm telemetry to the Interface.
+func (s *Server) BroadcastEvent(exchange, routingKey string, event map[string]interface{}) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Determine event type based on exchange
+	eventType := "telemetry"
+	if routingKey == "threat" || routingKey == "security" {
+		eventType = "threat"
+	}
+
+	for _, client := range s.clients {
+		s.sendMessage(client, map[string]interface{}{
+			"type": eventType,
+			"payload": map[string]interface{}{
+				"exchange":    exchange,
+				"routing_key": routingKey,
+				"data":        event,
+			},
+		})
+	}
+}
