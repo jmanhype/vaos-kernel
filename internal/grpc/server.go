@@ -24,7 +24,7 @@ type Dependencies struct {
 	Registry *nhi.Registry
 	Issuer   *kjwt.Issuer
 	Hasher   hash.Hasher
-	Ledger   *audit.Ledger
+	Ledger   audit.Recorder
 }
 
 // Server owns the gRPC runtime and all registered services.

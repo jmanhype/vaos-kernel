@@ -14,12 +14,22 @@ import (
 	"vaos-kernel/pkg/models"
 )
 
-// Ledger stores immutable-style audit entries and emits structured log output.
+// GenesisHash is the well-known seed for the hash chain.
+const GenesisHash = "vaos-kernel-genesis-0000000000000000000000000000000000000000000000"
+
+var (
+	errMissingAgentID  = errors.New("record audit entry: agent id is required")
+	errMissingComponent = errors.New("record audit entry: component is required")
+	errMissingAction   = errors.New("record audit entry: action is required")
+)
+
+// Ledger stores immutable-style audit entries with hash chaining.
 type Ledger struct {
-	mu      sync.RWMutex
-	entries []models.AuditEntry
-	logger  *log.Logger
-	clock   func() time.Time
+	mu        sync.RWMutex
+	entries   []models.AuditEntry
+	lastHash  string
+	logger    *log.Logger
+	clock     func() time.Time
 }
 
 // NewLedger creates a ledger backed by an optional writer.
@@ -28,21 +38,25 @@ func NewLedger(writer io.Writer) *Ledger {
 		writer = io.Discard
 	}
 	return &Ledger{
-		logger: log.New(writer, "", 0),
-		clock:  func() time.Time { return time.Now().UTC() },
+		lastHash: GenesisHash,
+		logger:   log.New(writer, "", 0),
+		clock:    func() time.Time { return time.Now().UTC() },
 	}
 }
 
-// Record appends an audit entry after deriving a cryptographic attestation.
+// Record appends an audit entry with hash-chained attestation.
+// Each entry's attestation includes the previous entry's hash,
+// creating a tamper-proof chain where modifying any historical
+// entry invalidates all subsequent entries.
 func (l *Ledger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
 	if entry.AgentID == "" {
-		return models.AuditEntry{}, errors.New("record audit entry: agent id is required")
+		return models.AuditEntry{}, errMissingAgentID
 	}
 	if entry.Component == "" {
-		return models.AuditEntry{}, errors.New("record audit entry: component is required")
+		return models.AuditEntry{}, errMissingComponent
 	}
 	if entry.Action == "" {
-		return models.AuditEntry{}, errors.New("record audit entry: action is required")
+		return models.AuditEntry{}, errMissingAction
 	}
 
 	if entry.ID == "" {
@@ -51,19 +65,39 @@ func (l *Ledger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = l.clock()
 	}
-	attestation, err := attest(entry)
+
+	l.mu.Lock()
+	// Hash chain: H_n = BLAKE2b(canonical_fields_n || H_{n-1})
+	attestation, err := attestChained(entry, l.lastHash)
 	if err != nil {
+		l.mu.Unlock()
 		return models.AuditEntry{}, err
 	}
 	entry.Attestation = attestation
-
-	l.mu.Lock()
+	l.lastHash = attestation
 	l.entries = append(l.entries, entry)
 	l.mu.Unlock()
 
 	payload, _ := json.Marshal(entry)
 	l.logger.Print(string(payload))
 	return entry, nil
+}
+
+// VerifyChain walks all entries and verifies the hash chain integrity.
+// Returns the index of the first broken link, or -1 if the chain is valid.
+func (l *Ledger) VerifyChain() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	prevHash := GenesisHash
+	for i, entry := range l.entries {
+		expected, err := attestChained(entry, prevHash)
+		if err != nil || expected != entry.Attestation {
+			return i
+		}
+		prevHash = entry.Attestation
+	}
+	return -1
 }
 
 // Entries returns a copy of all ledger entries.
@@ -75,7 +109,7 @@ func (l *Ledger) Entries() []models.AuditEntry {
 	return out
 }
 
-func attest(entry models.AuditEntry) (string, error) {
+func attestChained(entry models.AuditEntry, prevHash string) (string, error) {
 	payload, err := json.Marshal(struct {
 		ID                string            `json:"id"`
 		Timestamp         time.Time         `json:"timestamp"`
@@ -85,6 +119,7 @@ func attest(entry models.AuditEntry) (string, error) {
 		Component         string            `json:"component"`
 		Status            string            `json:"status"`
 		Details           map[string]string `json:"details,omitempty"`
+		PrevHash          string            `json:"prev_hash"`
 	}{
 		ID:                entry.ID,
 		Timestamp:         entry.Timestamp,
@@ -94,6 +129,7 @@ func attest(entry models.AuditEntry) (string, error) {
 		Component:         entry.Component,
 		Status:            entry.Status,
 		Details:           entry.Details,
+		PrevHash:          prevHash,
 	})
 	if err != nil {
 		return "", err

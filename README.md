@@ -1,134 +1,97 @@
 # VAOS-Kernel
 
-VAOS-Kernel is a Go-based coordination kernel for non-human identities (NHIs). It provides an in-memory NHI registry, deterministic intent hashing, 60-second just-in-time JWT issuance, an ALCOA+ style audit ledger, and concurrent gRPC endpoints for Swarm, Crucible, and Interface integrations.
+**Intent-scoped credentials with hash-chained ALCOA+ audit for AI agents.**
+
+Every credential is cryptographically bound to the exact action the agent declares. Every audit entry chains to the previous one. Modify any record and the entire chain breaks. The compliance tax? **0.5% overhead.**
+
+Submitted to [NIST NCCoE](https://www.nccoe.nist.gov/projects/software-and-ai-agent-identity-and-authorization) as a public comment on AI Agent Identity and Authorization. Implements the pattern described in [IETF draft-goswami-agentic-jwt-00](https://datatracker.ietf.org/doc/draft-goswami-agentic-jwt/).
+
+## Benchmark Results (Mac Mini M4, Go 1.26, PostgreSQL 17)
+
+| Configuration | RPS at 1,000 agents | p99 Latency |
+|---|---|---|
+| Baseline (no attestation) | 51,005 | 0.70ms |
+| **Sync + ALCOA+ attestation** | **50,774** | **1.69ms** |
+| Async attestation | 32,827 | 87.86ms |
+| Sync + Postgres | 20,329 | 622ms |
+| Async + Postgres | 864 | 10,123ms |
+
+Full ALCOA+ attestation (BLAKE2b fingerprinting + JWT signing + hash chain) adds **0.5% overhead** versus doing nothing. Async write-behind is 35% slower due to channel coordination exceeding sub-microsecond BLAKE2b computation.
+
+[Paper: "vaos-kernel: Intent-Scoped Credentials with Hash-Chained ALCOA+ Audit for Non-Human Identities"](https://vaos.sh/blog/non-human-identity-ai-agents) (15 citations, real hardware benchmarks)
+
+## What It Does
+
+**Intent-scoped credentials.** The agent declares what it plans to do — action, resource, parameters. That declaration gets BLAKE2b-256 hashed into a deterministic fingerprint, sealed inside a 60-second JWT. If the agent tries anything other than what it declared, the credential is mathematically invalid.
+
+**Hash-chained ALCOA+ audit.** Every audit entry's attestation includes the previous entry's hash: `H_n = BLAKE2b(canonical_fields_n || H_{n-1})`. Modify any historical entry and the chain breaks for all subsequent entries. This is the same data integrity standard pharmaceutical companies use for FDA 21 CFR Part 11 — applied to AI agent actions.
+
+**60-second ephemeral TTL.** Credentials self-destruct. No standing privileges. Verification rejects any token where `exp - iat ≠ 60s`.
+
+## How It Differs
+
+| | vaos-kernel | HashiCorp Vault | SPIFFE/SPIRE | OPA |
+|---|---|---|---|---|
+| Credential scope | Per-action (60s) | Session (min-hr) | Workload (min-hr) | N/A |
+| Intent binding | BLAKE2b hash | None | None | Policy logic |
+| Audit integrity | Hash-chained | Append-only | Standard log | Mutable log |
+| ALCOA+ compliance | Full | Partial | None | None |
 
 ## Architecture
 
-```text
-                 +-------------------+
-                 |   User / Client   |
-                 +---------+---------+
-                           |
-                           v
-                 +-------------------+
-                 |   VAOS-Kernel     |
-                 | cmd/kernel        |
-                 +---------+---------+
-                           |
-      +--------------------+--------------------+
-      |                    |                    |
-      v                    v                    v
-+-------------+   +----------------+   +----------------+
-| NHI Registry|   | JWT Issuer     |   | Audit Ledger   |
-| internal/nhi|   | internal/jwt   |   | internal/audit |
-+------+------+   +--------+-------+   +--------+-------+
-       |                    |                    |
-       +----------+---------+---------+----------+
-                  |                   |
-                  v                   v
-           +-------------+     +--------------+
-           | Intent Hash |     | gRPC Services|
-           | internal/hash|    | internal/grpc|
-           +------+------+     +------+-------+
-                  |                   |
-          +-------+-------+   +-------+-------+-------+
-          |               |   |               |       |
-          v               v   v               v       v
-      swarm.proto   crucible.proto    interface.proto clients
+```
+Request → JSON Parse → BLAKE2b Intent Fingerprint → 60s JWT Issue → Hash Chain Audit → Response
 ```
 
-## Project Overview
+- `internal/jwt` — strict 60s JIT JWT issuer/verifier (HS256, `golang-jwt/jwt/v5`)
+- `internal/hash` — deterministic BLAKE2b-256 intent fingerprinting (`golang.org/x/crypto/blake2b`)
+- `internal/audit` — hash-chained ALCOA+ ledger with `VerifyChain()` integrity check
+- `internal/nhi` — NHI registry (agent identity, roles, capabilities, reputation, token lifecycle)
+- `internal/grpc` — concurrent gRPC services (Swarm, Crucible, Interface)
+- `cmd/benchmark` — load generator with Poisson arrivals, connection pooling, CSV/JSON output
 
-- `internal/nhi`: agent identity, role, capability, reputation, intent fingerprint, and token lifecycle registry.
-- `internal/jwt`: strict 60-second JIT JWT issuer and verifier.
-- `internal/hash`: deterministic cryptographic intent hashing using BLAKE2b-256 from `golang.org/x/crypto`.
-- `internal/audit`: ALCOA+ aligned audit ledger with structured log emission and attestations.
-- `internal/grpc`: concurrent gRPC services for Swarm, Crucible, and Interface traffic.
-- `pkg/models`: shared models used across the kernel.
-
-## Installation
-
-1. Install Go 1.21 or newer.
-2. Install `protoc` and the Go protobuf plugins if you plan to run `make proto`.
-3. Clone the repository and fetch dependencies:
+## Quick Start
 
 ```bash
 go mod tidy
+go build -o vaos-kernel ./cmd/kernel
+./vaos-kernel
 ```
 
-4. Build the project:
+The kernel starts gRPC on `:50051` and HTTP on `:8080`.
 
 ```bash
-make build
+# Issue a token
+curl -X POST http://localhost:8080/api/token \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "zoe", "intent_hash": "read-table-users", "action_type": "query"}'
+
+# List agents
+curl http://localhost:8080/api/agents
 ```
 
-## Usage
-
-Start the kernel server:
+## Run Benchmarks
 
 ```bash
-go run ./cmd/kernel
+go build -o benchmark ./cmd/benchmark
+./benchmark
 ```
 
-Override the listening address:
+Outputs `benchmark_results.csv` and `benchmark_results.json`. Set `VAOS_KERNEL_MODE=async` for async mode, `VAOS_DB_DSN=...` for Postgres-backed modes.
 
-```bash
-VAOS_KERNEL_ADDR=127.0.0.1:9090 go run ./cmd/kernel
-```
+## Why Now
 
-## API Documentation
+- **NIST NCCoE** seeking agent identity guidance (comments due April 2, 2026)
+- **EU AI Act** high-risk provisions effective August 2, 2026
+- **IETF** standardizing intent-scoped JWTs (draft-goswami-agentic-jwt-00)
+- **$21B NHI market** — 63% of orgs can't enforce agent purpose limits (CSA 2026)
 
-### NHI Registry
+## Related
 
-- Register and retrieve agents with roles, capabilities, and reputation scores.
-- Store latest intent fingerprints used to scope JIT tokens.
-- Track token issuance, use, and revocation states.
+- [vaos.sh](https://vaos.sh) — managed AI agent infrastructure
+- [denario_ex](https://github.com/jmanhype/denario_ex) — Elixir research pipeline that generated the paper
+- [Blog: The $21B Problem Nobody's Solving](https://vaos.sh/blog/non-human-identity-ai-agents)
 
-### JWT Issuer
+## License
 
-- Issues HS256 signed JWTs.
-- Enforces exactly one intent fingerprint per token.
-- Rejects tokens whose `exp - iat` is not exactly 60 seconds.
-
-### Audit Ledger
-
-- Records agent actions with timestamps and cryptographic attestations.
-- Produces structured JSON log lines.
-- Supports gRPC execution evidence.
-
-### gRPC Services
-
-- `SwarmService.ExecuteIntent`
-- `CrucibleService.ExecuteTask`
-- `InterfaceService.Dispatch`
-
-Each request includes:
-
-- `agent_id`
-- `token`
-- `action`
-- `resource`
-- `parameters`
-
-Each response includes an execution identifier and service-specific evidence.
-
-## Testing
-
-Run the full test suite:
-
-```bash
-make test
-```
-
-Unit tests cover hashing, registry operations, JWT issuance/verification, and the audit ledger. Integration tests start an in-memory gRPC server, issue real tokens, and exercise all three service endpoints concurrently.
-
-## Protocol Buffers
-
-Protocol definitions live in [proto/swarm.proto](/C:/Users/strau/.openclaw/workspace/VAOS-Kernel/proto/swarm.proto), [proto/crucible.proto](/C:/Users/strau/.openclaw/workspace/VAOS-Kernel/proto/crucible.proto), and [proto/interface.proto](/C:/Users/strau/.openclaw/workspace/VAOS-Kernel/proto/interface.proto).
-
-Generate Go bindings with:
-
-```bash
-make proto
-```
-
+GPL-3.0

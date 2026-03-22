@@ -21,6 +21,13 @@ import (
 )
 
 func main() {
+	// Mode selection: "sync" (Mode A) or "async" (Mode B)
+	mode := os.Getenv("VAOS_KERNEL_MODE")
+	if mode == "" {
+		mode = "sync"
+	}
+	log.Printf("VAOS-Kernel starting in %s mode", mode)
+
 	// Try Postgres first, fall back to in-memory
 	var registry *nhi.Registry
 	var registryDB *nhi.RegistryDB
@@ -119,7 +126,45 @@ func main() {
 		log.Fatalf("create issuer: %v", err)
 	}
 
-	ledger := audit.NewLedger(auditWriter)
+	dbDSN := os.Getenv("VAOS_DB_DSN")
+
+	var ledger audit.Recorder
+	switch mode {
+	case "async":
+		asyncLedger := audit.NewAsyncLedger(auditWriter, audit.DefaultAsyncConfig())
+		ledger = asyncLedger
+		log.Printf("Mode B: async write-behind in-memory (buffer=%d)",
+			audit.DefaultAsyncConfig().BufferSize)
+		defer asyncLedger.Close()
+
+	case "db-sync":
+		if dbDSN == "" {
+			log.Fatal("db-sync mode requires VAOS_DB_DSN")
+		}
+		dbLedger, err := audit.NewDBLedger(dbDSN, auditWriter)
+		if err != nil {
+			log.Fatalf("create DB ledger: %v", err)
+		}
+		ledger = dbLedger
+		log.Printf("Mode A+DB: synchronous attestation with Postgres fsync")
+		defer dbLedger.Close()
+
+	case "db-async":
+		if dbDSN == "" {
+			log.Fatal("db-async mode requires VAOS_DB_DSN")
+		}
+		asyncDB, err := audit.NewAsyncDBLedger(dbDSN, auditWriter, 10000)
+		if err != nil {
+			log.Fatalf("create async DB ledger: %v", err)
+		}
+		ledger = asyncDB
+		log.Printf("Mode B+DB: async write-behind with Postgres batch")
+		defer asyncDB.Close()
+
+	default:
+		ledger = audit.NewLedger(auditWriter)
+		log.Printf("Mode A: synchronous attestation in-memory")
+	}
 
 	server, err := kgrpc.NewServer(kgrpc.Dependencies{
 		Registry: registry,
