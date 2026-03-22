@@ -1,4 +1,5 @@
 # VAOS-Kernel
+n[![CI](https://github.com/jmanhype/vaos-kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/jmanhype/vaos-kernel/actions/workflows/ci.yml) [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE) [![Go](https://img.shields.io/badge/Go-1.22-00ADD8.svg)](https://go.dev)
 
 **Intent-scoped credentials with hash-chained ALCOA+ audit for AI agents.**
 
