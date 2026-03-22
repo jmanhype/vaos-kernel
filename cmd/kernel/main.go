@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"strings"
 	"sync"
+	"syscall"
 
 	kamqp "vaos-kernel/internal/amqp"
 	"vaos-kernel/internal/audit"
@@ -121,7 +126,20 @@ func main() {
 		_ = registryDB
 	}
 
-	issuer, err := kjwt.NewIssuer([]byte("vaos-kernel-dev-signing-key"), registry)
+	// JWT signing key from env, or generate a random one for dev
+	jwtSecret := os.Getenv("VAOS_JWT_SECRET")
+	var signingKey []byte
+	if jwtSecret != "" {
+		signingKey = []byte(jwtSecret)
+	} else {
+		signingKey = make([]byte, 32)
+		if _, err := rand.Read(signingKey); err != nil {
+			log.Fatalf("generate random signing key: %v", err)
+		}
+		log.Printf("WARNING: VAOS_JWT_SECRET not set — using random ephemeral signing key (tokens will not survive restart)")
+	}
+
+	issuer, err := kjwt.NewIssuer(signingKey, registry)
 	if err != nil {
 		log.Fatalf("create issuer: %v", err)
 	}
@@ -178,6 +196,28 @@ func main() {
 
 	wsServer := websocket.NewServer(registry)
 
+	// API auth middleware — checks Authorization: Bearer <VAOS_API_SECRET>
+	apiSecret := os.Getenv("VAOS_API_SECRET")
+	if apiSecret == "" {
+		log.Printf("WARNING: VAOS_API_SECRET not set — HTTP API endpoints are unauthenticated (dev mode)")
+	}
+	requireAuth := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if apiSecret != "" {
+				auth := r.Header.Get("Authorization")
+				if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != apiSecret {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+			}
+			next(w, r)
+		}
+	}
+
+	// Graceful shutdown context
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	var wg sync.WaitGroup
 
 	// gRPC server
@@ -198,80 +238,84 @@ func main() {
 		}
 	}()
 
-	// WebSocket server
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		wsAddr := os.Getenv("VAOS_KERNEL_WS_ADDR")
-		if wsAddr == "" {
-			wsAddr = "0.0.0.0:8080"
+	// WebSocket + HTTP server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", wsServer.HandleWebSocket)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+	// Token endpoint for Swarm HTTP fallback — requires auth
+	mux.HandleFunc("/api/token", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "method not allowed", 405)
+			return
 		}
-		http.HandleFunc("/ws", wsServer.HandleWebSocket)
-		http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK"))
-		})
-		// Token endpoint for Swarm HTTP fallback
-		http.HandleFunc("/api/token", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "POST" {
-				http.Error(w, "method not allowed", 405)
-				return
-			}
-			var req struct {
-				AgentID    string `json:"agent_id"`
-				IntentHash string `json:"intent_hash"`
-				ActionType string `json:"action_type"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", 400)
-				return
-			}
-			token, record, err := issuer.Issue(req.AgentID, req.IntentHash)
-			if err != nil {
-				ledger.Record(models.AuditEntry{
-					AgentID:           req.AgentID,
-					Component:         "kernel.http",
-					Action:            "token_request_failed",
-					Status:            "error",
-					IntentFingerprint: req.IntentHash,
-					Details:           map[string]string{"error": err.Error()},
-				})
-				w.WriteHeader(500)
-				json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-				return
-			}
-
-			// Record successful token issuance to audit ledger
+		var req struct {
+			AgentID    string `json:"agent_id"`
+			IntentHash string `json:"intent_hash"`
+			ActionType string `json:"action_type"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", 400)
+			return
+		}
+		token, record, err := issuer.Issue(req.AgentID, req.IntentHash)
+		if err != nil {
 			ledger.Record(models.AuditEntry{
 				AgentID:           req.AgentID,
 				Component:         "kernel.http",
-				Action:            "token_issued",
-				Status:            "success",
+				Action:            "token_request_failed",
+				Status:            "error",
 				IntentFingerprint: req.IntentHash,
-				Details: map[string]string{
-					"token_id":    record.TokenID,
-					"action_type": req.ActionType,
-					"ttl":         "60s",
-				},
+				Details:           map[string]string{"error": err.Error()},
 			})
+			w.WriteHeader(500)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
 
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"token":      token,
-				"token_id":   record.TokenID,
-				"agent_id":   record.AgentID,
-				"expires_at": record.ExpiresAt,
-				"ttl_seconds": 60,
-			})
+		// Record successful token issuance to audit ledger
+		ledger.Record(models.AuditEntry{
+			AgentID:           req.AgentID,
+			Component:         "kernel.http",
+			Action:            "token_issued",
+			Status:            "success",
+			IntentFingerprint: req.IntentHash,
+			Details: map[string]string{
+				"token_id":    record.TokenID,
+				"action_type": req.ActionType,
+				"ttl":         "60s",
+			},
 		})
-		// Agent list endpoint
-		http.HandleFunc("/api/agents", func(w http.ResponseWriter, r *http.Request) {
-			agents := registry.ListAll()
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{"agents": agents})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"token":      token,
+			"token_id":   record.TokenID,
+			"agent_id":   record.AgentID,
+			"expires_at": record.ExpiresAt,
+			"ttl_seconds": 60,
 		})
+	}))
+	// Agent list endpoint — requires auth
+	mux.HandleFunc("/api/agents", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		agents := registry.ListAll()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"agents": agents})
+	}))
+
+	wsAddr := os.Getenv("VAOS_KERNEL_WS_ADDR")
+	if wsAddr == "" {
+		wsAddr = "0.0.0.0:8080"
+	}
+	httpServer := &http.Server{Addr: wsAddr, Handler: mux}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		log.Printf("VAOS-Kernel WebSocket listening on http://%s", wsAddr)
-		if err := http.ListenAndServe(wsAddr, nil); err != nil {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("serve WebSocket: %v", err)
 		}
 	}()
@@ -280,6 +324,7 @@ func main() {
 	amqpURL := os.Getenv("AMQP_URL")
 	if amqpURL == "" {
 		amqpURL = "amqp://guest:guest@localhost:5672"
+		log.Printf("WARNING: AMQP_URL not set — using default credentials (guest:guest). Set AMQP_URL for production.")
 	}
 	consumer := kamqp.NewConsumer(amqpURL, func(exchange, routingKey string, body []byte) {
 		event, err := kamqp.ParseTelemetryEvent(body)
@@ -296,5 +341,20 @@ func main() {
 		log.Printf("AMQP consumer connected — forwarding miosa.events + miosa.tasks to WebSocket")
 	}
 
+	// Wait for shutdown signal
+	<-ctx.Done()
+	log.Printf("Shutdown signal received, draining...")
+
+	// Gracefully stop HTTP server
+	httpServer.Shutdown(context.Background())
+
+	// Gracefully stop gRPC server
+	server.Stop()
+
+	// Stop AMQP consumer
+	consumer.Stop()
+
+	// Wait for goroutines to finish
 	wg.Wait()
+	log.Printf("VAOS-Kernel shutdown complete")
 }

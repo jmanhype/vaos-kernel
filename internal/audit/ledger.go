@@ -23,13 +23,16 @@ var (
 	errMissingAction   = errors.New("record audit entry: action is required")
 )
 
+const defaultMaxEntries = 100000
+
 // Ledger stores immutable-style audit entries with hash chaining.
 type Ledger struct {
-	mu        sync.RWMutex
-	entries   []models.AuditEntry
-	lastHash  string
-	logger    *log.Logger
-	clock     func() time.Time
+	mu         sync.RWMutex
+	entries    []models.AuditEntry
+	lastHash   string
+	logger     *log.Logger
+	clock      func() time.Time
+	maxEntries int
 }
 
 // NewLedger creates a ledger backed by an optional writer.
@@ -38,9 +41,10 @@ func NewLedger(writer io.Writer) *Ledger {
 		writer = io.Discard
 	}
 	return &Ledger{
-		lastHash: GenesisHash,
-		logger:   log.New(writer, "", 0),
-		clock:    func() time.Time { return time.Now().UTC() },
+		lastHash:   GenesisHash,
+		logger:     log.New(writer, "", 0),
+		clock:      func() time.Time { return time.Now().UTC() },
+		maxEntries: defaultMaxEntries,
 	}
 }
 
@@ -76,6 +80,11 @@ func (l *Ledger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
 	entry.Attestation = attestation
 	l.lastHash = attestation
 	l.entries = append(l.entries, entry)
+	// Evict oldest half when capacity exceeded
+	if l.maxEntries > 0 && len(l.entries) > l.maxEntries {
+		half := len(l.entries) / 2
+		l.entries = l.entries[half:]
+	}
 	l.mu.Unlock()
 
 	payload, _ := json.Marshal(entry)
@@ -85,17 +94,23 @@ func (l *Ledger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
 
 // VerifyChain walks all entries and verifies the hash chain integrity.
 // Returns the index of the first broken link, or -1 if the chain is valid.
+// After eviction, the chain may be partial — the first entry is always
+// trusted as the new anchor since its predecessor was evicted.
 func (l *Ledger) VerifyChain() int {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	prevHash := GenesisHash
-	for i, entry := range l.entries {
-		expected, err := attestChained(entry, prevHash)
-		if err != nil || expected != entry.Attestation {
+	if len(l.entries) == 0 {
+		return -1
+	}
+
+	// Start from the second entry; the first entry is the anchor after eviction.
+	for i := 1; i < len(l.entries); i++ {
+		prevHash := l.entries[i-1].Attestation
+		expected, err := attestChained(l.entries[i], prevHash)
+		if err != nil || expected != l.entries[i].Attestation {
 			return i
 		}
-		prevHash = entry.Attestation
 	}
 	return -1
 }

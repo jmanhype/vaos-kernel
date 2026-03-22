@@ -3,6 +3,7 @@ package jwt
 import (
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	gjwt "github.com/golang-jwt/jwt/v5"
@@ -10,6 +11,9 @@ import (
 	"vaos-kernel/internal/nhi"
 	"vaos-kernel/pkg/models"
 )
+
+// tokenSeq is an atomic counter to ensure unique TokenIDs even within the same nanosecond.
+var tokenSeq int64
 
 const tokenTTL = 60 * time.Second
 
@@ -53,7 +57,7 @@ func (i *Issuer) Issue(agentID, intentFingerprint string) (string, models.TokenR
 
 	now := i.clock().Truncate(time.Second)
 	record := models.TokenRecord{
-		TokenID:           fmt.Sprintf("%s-%d", agentID, now.UnixNano()),
+		TokenID:           fmt.Sprintf("%s-%d-%d", agentID, now.UnixNano(), atomic.AddInt64(&tokenSeq, 1)),
 		AgentID:           agentID,
 		IntentFingerprint: intentFingerprint,
 		IssuedAt:          now,
@@ -81,7 +85,7 @@ func (i *Issuer) Issue(agentID, intentFingerprint string) (string, models.TokenR
 	if err := i.registry.TrackToken(record); err != nil {
 		return "", models.TokenRecord{}, err
 	}
-	if err := i.registry.StoreIntentFingerprint(agentID, intentFingerprint); err != nil {
+	if err := i.registry.StoreTokenFingerprint(record.TokenID, intentFingerprint); err != nil {
 		return "", models.TokenRecord{}, err
 	}
 	return signed, record, nil
@@ -131,13 +135,15 @@ func (i *Issuer) Verify(tokenString, expectedFingerprint string) (*Claims, error
 	if record.IntentFingerprint != expectedFingerprint {
 		return nil, errors.New("verify token: registry fingerprint mismatch")
 	}
-	registryFingerprint, err := i.registry.IntentFingerprint(claims.AgentID)
+	registryFingerprint, err := i.registry.TokenFingerprint(claims.ID)
 	if err != nil {
 		return nil, err
 	}
 	if registryFingerprint != expectedFingerprint {
 		return nil, errors.New("verify token: current intent fingerprint mismatch")
 	}
-	_ = i.registry.MarkTokenUsed(record.TokenID, i.clock())
+	if err := i.registry.MarkTokenUsed(record.TokenID, i.clock()); err != nil {
+		return nil, err
+	}
 	return claims, nil
 }

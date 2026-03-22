@@ -62,6 +62,10 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.clients[clientID] = client
 	s.mu.Unlock()
 
+	// Start write pump first so we can send through the channel
+	go s.writePump(client)
+
+	// Send welcome through the writePump channel to avoid concurrent writes
 	welcome := map[string]interface{}{
 		"type": "connection",
 		"payload": map[string]interface{}{
@@ -69,14 +73,16 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			"client_id": clientID,
 		},
 	}
-	data, _ := json.Marshal(welcome)
-	conn.WriteMessage(websocket.TextMessage, data)
+	welcomeData, _ := json.Marshal(welcome)
+	select {
+	case client.Send <- welcomeData:
+	default:
+	}
 
 	// Auto-send agent list on connect
 	s.handleListAgents(client)
 
 	go s.readPump(client)
-	go s.writePump(client)
 }
 
 func (s *Server) readPump(client *Client) {

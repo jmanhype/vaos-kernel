@@ -14,6 +14,12 @@ import (
 // Hasher produces deterministic cryptographic intent fingerprints.
 type Hasher struct{}
 
+// HashRaw returns a BLAKE2b-256 hex digest of an arbitrary string.
+func (Hasher) HashRaw(input string) string {
+	sum := blake2b.Sum256([]byte(input))
+	return hex.EncodeToString(sum[:])
+}
+
 // HashIntent returns a deterministic BLAKE2b-256 digest for the supplied intent.
 func (Hasher) HashIntent(intent models.IntentRequest) (string, error) {
 	if intent.AgentID == "" {

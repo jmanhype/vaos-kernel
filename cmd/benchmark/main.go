@@ -40,6 +40,11 @@ type result struct {
 	ok      bool
 }
 
+type benchResult struct {
+	stats     stats
+	latencies []time.Duration
+}
+
 type stats struct {
 	concurrency int
 	totalReqs   int64
@@ -88,10 +93,11 @@ func main() {
 	allStats := make([]stats, 0)
 
 	for _, concurrency := range concurrencyLevels {
-		var runStats []stats
+		var runResults []benchResult
 		for run := 0; run < runsPerLevel; run++ {
-			s := benchmark(baseURL, concurrency, testDuration)
-			runStats = append(runStats, s)
+			br := benchmark(baseURL, concurrency, testDuration)
+			runResults = append(runResults, br)
+			s := br.stats
 			fmt.Printf("  Run %d/%d: %d RPS, p50=%.2fms p95=%.2fms p99=%.2fms\n",
 				run+1, runsPerLevel, int(s.rps),
 				float64(s.p50.Microseconds())/1000,
@@ -99,8 +105,8 @@ func main() {
 				float64(s.p99.Microseconds())/1000)
 		}
 
-		// Average across runs
-		avg := averageStats(runStats, concurrency)
+		// Merge raw latencies across runs and compute percentiles from combined distribution
+		avg := averageStats(runResults, concurrency)
 		allStats = append(allStats, avg)
 
 		fmt.Printf("  AVG c=%d: %.0f RPS, p50=%.2fms p95=%.2fms p99=%.2fms (%d/%d ok)\n\n",
@@ -149,7 +155,7 @@ func main() {
 	fmt.Printf("JSON saved to %s\n", jsonPath)
 }
 
-func benchmark(baseURL string, concurrency int, duration time.Duration) stats {
+func benchmark(baseURL string, concurrency int, duration time.Duration) benchResult {
 	var (
 		total   int64
 		success int64
@@ -222,18 +228,21 @@ func benchmark(baseURL string, concurrency int, duration time.Duration) stats {
 
 	n := len(latencies)
 	if n == 0 {
-		return stats{concurrency: concurrency}
+		return benchResult{stats: stats{concurrency: concurrency}}
 	}
 
-	return stats{
-		concurrency: concurrency,
-		totalReqs:   total,
-		successReqs: success,
-		duration:    duration,
-		p50:         latencies[n*50/100],
-		p95:         latencies[n*95/100],
-		p99:         latencies[n*99/100],
-		rps:         float64(total) / duration.Seconds(),
+	return benchResult{
+		stats: stats{
+			concurrency: concurrency,
+			totalReqs:   total,
+			successReqs: success,
+			duration:    duration,
+			p50:         latencies[n*50/100],
+			p95:         latencies[n*95/100],
+			p99:         latencies[n*99/100],
+			rps:         float64(total) / duration.Seconds(),
+		},
+		latencies: latencies,
 	}
 }
 
@@ -268,29 +277,38 @@ func sendHealthRequest(baseURL string) bool {
 	return resp.StatusCode == 200
 }
 
-func averageStats(runs []stats, concurrency int) stats {
+func averageStats(runs []benchResult, concurrency int) stats {
 	var totalRPS float64
-	var totalP50, totalP95, totalP99 time.Duration
 	var totalReqs, totalSuccess int64
 
+	// Merge all raw latencies across runs
+	var allLatencies []time.Duration
 	for _, r := range runs {
-		totalRPS += r.rps
-		totalP50 += r.p50
-		totalP95 += r.p95
-		totalP99 += r.p99
-		totalReqs += r.totalReqs
-		totalSuccess += r.successReqs
+		totalRPS += r.stats.rps
+		totalReqs += r.stats.totalReqs
+		totalSuccess += r.stats.successReqs
+		allLatencies = append(allLatencies, r.latencies...)
 	}
 
+	sort.Slice(allLatencies, func(i, j int) bool { return allLatencies[i] < allLatencies[j] })
+
 	n := len(runs)
+	m := len(allLatencies)
+	var p50, p95, p99 time.Duration
+	if m > 0 {
+		p50 = allLatencies[m*50/100]
+		p95 = allLatencies[m*95/100]
+		p99 = allLatencies[m*99/100]
+	}
+
 	return stats{
 		concurrency: concurrency,
 		totalReqs:   totalReqs / int64(n),
 		successReqs: totalSuccess / int64(n),
-		duration:    runs[0].duration,
-		p50:         totalP50 / time.Duration(n),
-		p95:         totalP95 / time.Duration(n),
-		p99:         totalP99 / time.Duration(n),
+		duration:    runs[0].stats.duration,
+		p50:         p50,
+		p95:         p95,
+		p99:         p99,
 		rps:         totalRPS / float64(n),
 	}
 }

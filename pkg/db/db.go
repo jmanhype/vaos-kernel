@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -18,14 +20,29 @@ type Config struct {
 	Database string
 }
 
-// DefaultConfig returns config for local development.
+// envOrDefault returns the environment variable value or a fallback.
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// DefaultConfig returns config from environment variables, falling back to
+// local development defaults.
 func DefaultConfig() Config {
+	port := 5432
+	if p := os.Getenv("VAOS_DB_PORT"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil {
+			port = v
+		}
+	}
 	return Config{
-		Host:     "localhost",
-		Port:     5432,
-		User:     "postgres",
-		Password: "vaos",
-		Database: "vaos",
+		Host:     envOrDefault("VAOS_DB_HOST", "localhost"),
+		Port:     port,
+		User:     envOrDefault("VAOS_DB_USER", "postgres"),
+		Password: envOrDefault("VAOS_DB_PASSWORD", "vaos"),
+		Database: envOrDefault("VAOS_DB_NAME", "vaos"),
 	}
 }
 

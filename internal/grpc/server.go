@@ -17,6 +17,7 @@ import (
 	"vaos-kernel/internal/hash"
 	kjwt "vaos-kernel/internal/jwt"
 	"vaos-kernel/internal/nhi"
+	"vaos-kernel/pkg/models"
 )
 
 // Dependencies contains the shared collaborators required by the service layer.
@@ -298,17 +299,69 @@ func (s *Server) wrapCrucibleUnary(fn func(context.Context, interface{}) (interf
 // KernelService handlers
 
 func (s *Server) handleRequestToken(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, type assert to TokenRequest
-	// For now, implement mock behavior
+	// Type assert to map for dynamic decoding
+	reqMap, ok := req.(map[string]interface{})
+	if !ok {
+		return &TokenResponse{Error: "invalid request type"}, status.Errorf(codes.InvalidArgument, "invalid request type")
+	}
+
+	agentID, _ := reqMap["agent_id"].(string)
+	intentHash, _ := reqMap["intent_hash"].(string)
+	actionType, _ := reqMap["action_type"].(string)
+
+	if agentID == "" || intentHash == "" {
+		return &TokenResponse{Error: "agent_id and intent_hash are required"}, status.Errorf(codes.InvalidArgument, "agent_id and intent_hash are required")
+	}
+
+	// Hash the intent using the real hasher
+	hashedIntent := s.deps.Hasher.HashRaw(intentHash)
+
+	// Issue a real JWT via the Issuer
+	token, record, err := s.deps.Issuer.Issue(agentID, hashedIntent)
+	if err != nil {
+		s.deps.Ledger.Record(models.AuditEntry{
+			AgentID:           agentID,
+			Component:         "kernel.grpc",
+			Action:            "token_request_failed",
+			Status:            "error",
+			IntentFingerprint: intentHash,
+			Details:           map[string]string{"error": err.Error()},
+		})
+		return &TokenResponse{Error: err.Error()}, status.Errorf(codes.Internal, "issue token: %v", err)
+	}
+
+	// Record successful issuance in audit ledger
+	s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:           agentID,
+		Component:         "kernel.grpc",
+		Action:            "token_issued",
+		Status:            "success",
+		IntentFingerprint: hashedIntent,
+		Details: map[string]string{
+			"token_id":    record.TokenID,
+			"action_type": actionType,
+			"ttl":         "60s",
+		},
+	})
+
 	return &TokenResponse{
-		Token:     "mock_jwt_token_" + fmt.Sprint(s.seq.Add(1)),
-		ExpiresAt: time.Now().Add(3600 * time.Second).Unix(),
-		Scope:     "all",
+		Token:     token,
+		ExpiresAt: record.ExpiresAt.Unix(),
+		Scope:     actionType,
 	}, nil
 }
 
 func (s *Server) handleSubmitTelemetry(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, store telemetry in ledger
+	reqMap, _ := req.(map[string]interface{})
+	agentID, _ := reqMap["agent_id"].(string)
+
+	s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:   agentID,
+		Component: "kernel.grpc",
+		Action:    "telemetry_received",
+		Status:    "success",
+	})
+
 	return &TelemetryResponse{
 		Success: true,
 		Message: "telemetry received",
@@ -316,8 +369,18 @@ func (s *Server) handleSubmitTelemetry(ctx context.Context, req interface{}) (in
 }
 
 func (s *Server) handleSubmitRoutingLog(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, store routing log
+	reqMap, _ := req.(map[string]interface{})
+	agentID, _ := reqMap["agent_id"].(string)
 	correlationID := fmt.Sprintf("routing-%d", s.seq.Add(1))
+
+	s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:   agentID,
+		Component: "kernel.grpc",
+		Action:    "routing_log_received",
+		Status:    "success",
+		Details:   map[string]string{"correlation_id": correlationID},
+	})
+
 	return &RoutingLogResponse{
 		Success:       true,
 		Message:       "routing log received",
@@ -326,8 +389,18 @@ func (s *Server) handleSubmitRoutingLog(ctx context.Context, req interface{}) (i
 }
 
 func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, verify and store audit confirmation
+	reqMap, _ := req.(map[string]interface{})
+	agentID, _ := reqMap["agent_id"].(string)
 	auditID := fmt.Sprintf("audit-%d", s.seq.Add(1))
+
+	s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:   agentID,
+		Component: "kernel.grpc",
+		Action:    "audit_confirmed",
+		Status:    "success",
+		Details:   map[string]string{"audit_id": auditID},
+	})
+
 	return &AuditResponse{
 		Confirmed: true,
 		AuditID:   auditID,
@@ -335,8 +408,18 @@ func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (inter
 }
 
 func (s *Server) handleExecuteIntent(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, type assert to SwarmIntentRequest
+	reqMap, _ := req.(map[string]interface{})
+	agentID, _ := reqMap["agent_id"].(string)
 	executionID := fmt.Sprintf("swarm-%d", s.seq.Add(1))
+
+	s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:   agentID,
+		Component: "kernel.grpc",
+		Action:    "intent_executed",
+		Status:    "success",
+		Details:   map[string]string{"execution_id": executionID},
+	})
+
 	return &SwarmIntentResponse{
 		ExecutionID: executionID,
 		Status:      "coordinated",

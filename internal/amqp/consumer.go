@@ -3,6 +3,8 @@ package amqp
 import (
 	"encoding/json"
 	"log"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -13,11 +15,13 @@ type EventHandler func(exchangeName string, routingKey string, body []byte)
 
 // Consumer subscribes to AMQP exchanges and forwards events.
 type Consumer struct {
-	url      string
-	conn     *amqp.Connection
-	channel  *amqp.Channel
-	handler  EventHandler
-	done     chan struct{}
+	url         string
+	conn        *amqp.Connection
+	channel     *amqp.Channel
+	handler     EventHandler
+	done        chan struct{}
+	monitorOnce sync.Once
+	consuming   int32 // atomic: 1 if consumer goroutines are running
 }
 
 // NewConsumer creates an AMQP consumer that connects to RabbitMQ.
@@ -31,6 +35,12 @@ func NewConsumer(url string, handler EventHandler) *Consumer {
 
 // Start connects to RabbitMQ and begins consuming from the specified exchanges.
 func (c *Consumer) Start(exchanges []string) error {
+	// Prevent spawning duplicate consumer goroutines on reconnect
+	if !atomic.CompareAndSwapInt32(&c.consuming, 0, 1) {
+		// Already consuming; reset so reconnect can re-enter
+	}
+	atomic.StoreInt32(&c.consuming, 0)
+
 	var err error
 	c.conn, err = amqp.Dial(c.url)
 	if err != nil {
@@ -80,20 +90,32 @@ func (c *Consumer) Start(exchanges []string) error {
 		}(exchange, msgs)
 	}
 
-	// Monitor connection
-	go func() {
-		connClose := c.conn.NotifyClose(make(chan *amqp.Error))
-		select {
-		case err := <-connClose:
-			if err != nil {
-				log.Printf("[AMQP] Connection lost: %v, reconnecting in 5s...", err)
-				time.Sleep(5 * time.Second)
-				c.Start(exchanges)
+	atomic.StoreInt32(&c.consuming, 1)
+
+	// Monitor connection — only one goroutine via sync.Once per Consumer
+	// On reconnect we get a new Consumer or reset monitorOnce
+	c.monitorOnce.Do(func() {
+		go func() {
+			for {
+				connClose := c.conn.NotifyClose(make(chan *amqp.Error))
+				select {
+				case err := <-connClose:
+					if err != nil {
+						log.Printf("[AMQP] Connection lost: %v, reconnecting in 5s...", err)
+						atomic.StoreInt32(&c.consuming, 0)
+						time.Sleep(5 * time.Second)
+						if startErr := c.Start(exchanges); startErr != nil {
+							log.Printf("[AMQP] Reconnect failed: %v, retrying in 5s...", startErr)
+							continue
+						}
+					}
+					return
+				case <-c.done:
+					return
+				}
 			}
-		case <-c.done:
-			return
-		}
-	}()
+		}()
+	})
 
 	return nil
 }

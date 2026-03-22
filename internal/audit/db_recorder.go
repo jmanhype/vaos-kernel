@@ -3,6 +3,7 @@ package audit
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"sync"
@@ -136,6 +137,7 @@ type AsyncDBLedger struct {
 	logger    *log.Logger
 	clock     func() time.Time
 	queue     chan models.AuditEntry
+	closed    int32 // atomic flag: 1 = closed
 	done      chan struct{}
 	wg        sync.WaitGroup
 	fallbacks int64
@@ -173,6 +175,9 @@ func NewAsyncDBLedger(dbDSN string, logWriter io.Writer, bufferSize int) (*Async
 }
 
 func (al *AsyncDBLedger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
+	if atomic.LoadInt32(&al.closed) == 1 {
+		return models.AuditEntry{}, errors.New("record audit entry: ledger is closed")
+	}
 	if entry.AgentID == "" {
 		return models.AuditEntry{}, errMissingAgentID
 	}
@@ -333,4 +338,9 @@ func (al *AsyncDBLedger) VerifyChain() int {
 }
 
 func (al *AsyncDBLedger) Fallbacks() int64 { return atomic.LoadInt64(&al.fallbacks) }
-func (al *AsyncDBLedger) Close()           { close(al.done); al.wg.Wait(); al.db.Close() }
+func (al *AsyncDBLedger) Close() {
+	atomic.StoreInt32(&al.closed, 1)
+	close(al.done)
+	al.wg.Wait()
+	al.db.Close()
+}

@@ -2,6 +2,7 @@ package nhi
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"vaos-kernel/pkg/db"
@@ -45,7 +46,7 @@ func (r *RegistryDB) RegisterAgent(agent models.Agent) error {
 func (r *RegistryDB) GetAgent(agentID string) (models.Agent, error) {
 	agent, err := r.db.GetAgent(agentID)
 	if err != nil {
-		return models.Agent{}, NewErr("get agent: %w", err)
+		return models.Agent{}, NewErr("get agent: %v", err)
 	}
 	return agent, nil
 }
@@ -72,7 +73,7 @@ func (r *RegistryDB) StoreIntentFingerprint(agentID, fingerprint string) error {
 func (r *RegistryDB) IntentFingerprint(agentID string) (string, error) {
 	fingerprint, err := r.db.IntentFingerprint(agentID)
 	if err != nil {
-		return "", NewErr("intent fingerprint: %w", err)
+		return "", NewErr("intent fingerprint: %v", err)
 	}
 	return fingerprint, nil
 }
@@ -101,7 +102,7 @@ func (r *RegistryDB) TrackToken(record models.TokenRecord) error {
 // MarkTokenUsed marks a token as consumed.
 func (r *RegistryDB) MarkTokenUsed(tokenID string, usedAt time.Time) error {
 	if err := r.db.MarkTokenUsed(tokenID, usedAt); err != nil {
-		return NewErr("mark token used: %w", err)
+		return NewErr("mark token used: %v", err)
 	}
 	return nil
 }
@@ -109,7 +110,7 @@ func (r *RegistryDB) MarkTokenUsed(tokenID string, usedAt time.Time) error {
 // RevokeToken marks a token as revoked.
 func (r *RegistryDB) RevokeToken(tokenID string, revokedAt time.Time) error {
 	if err := r.db.RevokeToken(tokenID, revokedAt); err != nil {
-		return NewErr("revoke token: %w", err)
+		return NewErr("revoke token: %v", err)
 	}
 	return nil
 }
@@ -118,7 +119,7 @@ func (r *RegistryDB) RevokeToken(tokenID string, revokedAt time.Time) error {
 func (r *RegistryDB) Token(tokenID string) (models.TokenRecord, error) {
 	token, err := r.db.GetToken(tokenID)
 	if err != nil {
-		return models.TokenRecord{}, NewErr("token: %w", err)
+		return models.TokenRecord{}, NewErr("token: %v", err)
 	}
 	return token, nil
 }
@@ -211,7 +212,7 @@ type Err struct {
 }
 
 func NewErr(format string, args ...interface{}) *Err {
-	return &Err{msg: format}
+	return &Err{msg: fmt.Errorf(format, args...).Error()}
 }
 
 func (e *Err) Error() string {

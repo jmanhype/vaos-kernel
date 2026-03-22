@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"sync"
@@ -29,8 +30,9 @@ type AsyncLedger struct {
 	fallbacks  int64 // atomic counter: times circuit breaker triggered
 
 	// Lifecycle
-	done chan struct{}
-	wg   sync.WaitGroup
+	closed int32 // atomic flag: 1 = closed
+	done   chan struct{}
+	wg     sync.WaitGroup
 }
 
 // AsyncConfig controls the async write-behind behavior.
@@ -80,6 +82,9 @@ func NewAsyncLedger(writer io.Writer, cfg AsyncConfig) *AsyncLedger {
 // The entry's timestamp is set synchronously (contemporaneous).
 // If the buffer is full, falls back to synchronous write (circuit breaker).
 func (al *AsyncLedger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
+	if atomic.LoadInt32(&al.closed) == 1 {
+		return models.AuditEntry{}, errors.New("record audit entry: ledger is closed")
+	}
 	if entry.AgentID == "" {
 		return models.AuditEntry{}, errMissingAgentID
 	}
@@ -230,6 +235,7 @@ func (al *AsyncLedger) Pending() int {
 
 // Close drains the queue and stops the background writer.
 func (al *AsyncLedger) Close() {
+	atomic.StoreInt32(&al.closed, 1)
 	close(al.done)
 	al.wg.Wait()
 }

@@ -15,7 +15,8 @@ type StateChangeCallback func(agentID string, oldState, newState models.AgentSta
 type Registry struct {
 	mu                 sync.RWMutex
 	agents             map[string]models.Agent
-	intentFingerprints map[string]string
+	intentFingerprints map[string]string // legacy: keyed by agentID
+	tokenFingerprints  map[string]string // keyed by tokenID
 	tokens             map[string]models.TokenRecord
 	stateCallbacks     []StateChangeCallback
 }
@@ -25,6 +26,7 @@ func NewRegistry() *Registry {
 	return &Registry{
 		agents:             make(map[string]models.Agent),
 		intentFingerprints: make(map[string]string),
+		tokenFingerprints:  make(map[string]string),
 		tokens:             make(map[string]models.TokenRecord),
 		stateCallbacks:      make([]StateChangeCallback, 0),
 	}
@@ -84,6 +86,30 @@ func (r *Registry) IntentFingerprint(agentID string) (string, error) {
 	fingerprint, ok := r.intentFingerprints[agentID]
 	if !ok {
 		return "", errors.New("intent fingerprint: fingerprint not found")
+	}
+	return fingerprint, nil
+}
+
+// StoreTokenFingerprint binds an intent fingerprint to a specific token.
+func (r *Registry) StoreTokenFingerprint(tokenID, fingerprint string) error {
+	if tokenID == "" || fingerprint == "" {
+		return errors.New("store token fingerprint: token id and fingerprint are required")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tokenFingerprints[tokenID] = fingerprint
+	return nil
+}
+
+// TokenFingerprint returns the fingerprint stored for a specific token.
+func (r *Registry) TokenFingerprint(tokenID string) (string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	fingerprint, ok := r.tokenFingerprints[tokenID]
+	if !ok {
+		return "", errors.New("token fingerprint: fingerprint not found")
 	}
 	return fingerprint, nil
 }
