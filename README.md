@@ -87,6 +87,12 @@ Outputs `benchmark_results.csv` and `benchmark_results.json`. Set `VAOS_KERNEL_M
 - **IETF** standardizing intent-scoped JWTs (draft-goswami-agentic-jwt-00)
 - **$21B NHI market** — 63% of orgs can't enforce agent purpose limits (CSA 2026)
 
+## Need Help with AI Agent Compliance?
+
+**Free 30-minute AI Agent Compliance Gap Analysis** — I'll review your AI agent architecture and identify ALCOA+ compliance gaps before FDA/EU AI Act enforcement hits.
+
+[Book a consultation](https://cal.com/straughter/compliance-gap-analysis) | [straughter@vaos.sh](mailto:straughter@vaos.sh)
+
 ## Related
 
 - [vaos.sh](https://vaos.sh) — managed AI agent infrastructure
