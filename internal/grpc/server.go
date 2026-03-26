@@ -391,14 +391,48 @@ func (s *Server) handleSubmitRoutingLog(ctx context.Context, req interface{}) (i
 func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (interface{}, error) {
 	reqMap, _ := req.(map[string]interface{})
 	agentID, _ := reqMap["agent_id"].(string)
+	actionID, _ := reqMap["action_id"].(string)
+	intentHash, _ := reqMap["intent_hash"].(string)
+	method, _ := reqMap["method"].(string)
+	performedBy, _ := reqMap["performed_by"].(string)
+
+	// ALCOA+ booleans
+	attributable, _ := reqMap["attributable"].(bool)
+	legible, _ := reqMap["legible"].(bool)
+	contemporaneous, _ := reqMap["contemporaneous"].(bool)
+	original, _ := reqMap["original"].(bool)
+	accurate, _ := reqMap["accurate"].(bool)
+
+	// Build details map from all fields
+	details := map[string]string{
+		"action_id":       actionID,
+		"method":          method,
+		"performed_by":    performedBy,
+		"attributable":    fmt.Sprintf("%t", attributable),
+		"legible":         fmt.Sprintf("%t", legible),
+		"contemporaneous": fmt.Sprintf("%t", contemporaneous),
+		"original":        fmt.Sprintf("%t", original),
+		"accurate":        fmt.Sprintf("%t", accurate),
+	}
+
+	// Extract context sub-map
+	if ctxMap, ok := reqMap["context"].(map[string]interface{}); ok {
+		for k, v := range ctxMap {
+			if vs, ok := v.(string); ok {
+				details["ctx_"+k] = vs
+			}
+		}
+	}
+
 	auditID := fmt.Sprintf("audit-%d", s.seq.Add(1))
 
 	s.deps.Ledger.Record(models.AuditEntry{
-		AgentID:   agentID,
-		Component: "kernel.grpc",
-		Action:    "audit_confirmed",
-		Status:    "success",
-		Details:   map[string]string{"audit_id": auditID},
+		AgentID:           agentID,
+		Component:         "kernel.grpc",
+		Action:            "audit_confirmed",
+		Status:            "success",
+		IntentFingerprint: intentHash,
+		Details:           details,
 	})
 
 	return &AuditResponse{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	kamqp "vaos-kernel/internal/amqp"
 	"vaos-kernel/internal/audit"
@@ -296,6 +298,63 @@ func main() {
 			"agent_id":   record.AgentID,
 			"expires_at": record.ExpiresAt,
 			"ttl_seconds": 60,
+		})
+	}))
+	// Audit confirmation endpoint - requires auth (receipt chain)
+	mux.HandleFunc("/api/audit", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		var params map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			http.Error(w, "bad request", 400)
+			return
+		}
+
+		agentID, _ := params["agent_id"].(string)
+		actionID, _ := params["action_id"].(string)
+		intentHash, _ := params["intent_hash"].(string)
+		method, _ := params["method"].(string)
+		performedBy, _ := params["performed_by"].(string)
+		attributable, _ := params["attributable"].(bool)
+		legible, _ := params["legible"].(bool)
+		contemporaneous, _ := params["contemporaneous"].(bool)
+		original, _ := params["original"].(bool)
+		accurate, _ := params["accurate"].(bool)
+
+		details := map[string]string{
+			"action_id":       actionID,
+			"method":          method,
+			"performed_by":    performedBy,
+			"attributable":    fmt.Sprintf("%t", attributable),
+			"legible":         fmt.Sprintf("%t", legible),
+			"contemporaneous": fmt.Sprintf("%t", contemporaneous),
+			"original":        fmt.Sprintf("%t", original),
+			"accurate":        fmt.Sprintf("%t", accurate),
+		}
+
+		if ctxMap, ok := params["context"].(map[string]interface{}); ok {
+			for k, v := range ctxMap {
+				if vs, ok := v.(string); ok {
+					details["ctx_"+k] = vs
+				}
+			}
+		}
+
+		ledger.Record(models.AuditEntry{
+			AgentID:           agentID,
+			Component:         "kernel.http",
+			Action:            "audit_confirmed",
+			Status:            "success",
+			IntentFingerprint: intentHash,
+			Details:           details,
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"confirmed": true,
+			"audit_id":  fmt.Sprintf("http-audit-%d", time.Now().UnixNano()),
 		})
 	}))
 	// Agent list endpoint — requires auth
