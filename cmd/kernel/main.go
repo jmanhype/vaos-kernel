@@ -440,6 +440,7 @@ func main() {
 		sig := signer.Sign([]byte(entry.Attestation))
 		auditID := fmt.Sprintf("http-audit-%d", time.Now().UnixNano())
 		sigs.Put(auditID, sig)
+		sigs.Put(entry.ID, sig)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{

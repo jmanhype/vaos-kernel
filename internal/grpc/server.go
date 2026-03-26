@@ -448,6 +448,7 @@ func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (inter
 		sig = s.deps.Signer.Sign([]byte(entry.Attestation))
 		if s.deps.OnSigned != nil {
 			s.deps.OnSigned(auditID, sig)
+			s.deps.OnSigned(entry.ID, sig)
 		}
 	}
 
