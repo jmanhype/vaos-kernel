@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +19,7 @@ import (
 
 	kamqp "vaos-kernel/internal/amqp"
 	"vaos-kernel/internal/audit"
+	"vaos-kernel/internal/signing"
 	kgrpc "vaos-kernel/internal/grpc"
 	"vaos-kernel/internal/hash"
 	kjwt "vaos-kernel/internal/jwt"
@@ -186,11 +188,20 @@ func main() {
 		log.Printf("Mode A: synchronous attestation in-memory")
 	}
 
+	// Ed25519 signer for audit attestation signatures
+	keyPath := filepath.Join(os.Getenv("HOME"), ".vaos-kernel", "signing.key")
+	signer, err := signing.NewSigner(keyPath)
+	if err != nil {
+		log.Fatalf("create signer: %v", err)
+	}
+	log.Printf("Ed25519 signer ready (pubkey: %s...)", signer.PublicKeyHex()[:16])
+
 	server, err := kgrpc.NewServer(kgrpc.Dependencies{
 		Registry: registry,
 		Issuer:   issuer,
 		Hasher:   hash.Hasher{},
 		Ledger:   ledger,
+		Signer:   signer,
 	})
 	if err != nil {
 		log.Fatalf("create grpc server: %v", err)
@@ -300,6 +311,11 @@ func main() {
 			"ttl_seconds": 60,
 		})
 	}))
+	// Public key endpoint — no auth required (public key is public)
+	mux.HandleFunc("/api/audit/pubkey", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"public_key": signer.PublicKeyHex()})
+	})
 	// Audit confirmation endpoint - requires auth (receipt chain)
 	mux.HandleFunc("/api/audit", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -342,7 +358,7 @@ func main() {
 			}
 		}
 
-		ledger.Record(models.AuditEntry{
+		entry, err := ledger.Record(models.AuditEntry{
 			AgentID:           agentID,
 			Component:         "kernel.http",
 			Action:            "audit_confirmed",
@@ -350,11 +366,19 @@ func main() {
 			IntentFingerprint: intentHash,
 			Details:           details,
 		})
+		if err != nil {
+			w.WriteHeader(500)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		sig := signer.Sign([]byte(entry.Attestation))
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"confirmed": true,
 			"audit_id":  fmt.Sprintf("http-audit-%d", time.Now().UnixNano()),
+			"signature": sig,
 		})
 	}))
 	// Agent list endpoint — requires auth

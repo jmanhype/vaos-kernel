@@ -17,6 +17,7 @@ import (
 	"vaos-kernel/internal/hash"
 	kjwt "vaos-kernel/internal/jwt"
 	"vaos-kernel/internal/nhi"
+	"vaos-kernel/internal/signing"
 	"vaos-kernel/pkg/models"
 )
 
@@ -26,6 +27,7 @@ type Dependencies struct {
 	Issuer   *kjwt.Issuer
 	Hasher   hash.Hasher
 	Ledger   audit.Recorder
+	Signer   *signing.Signer // Ed25519 signer for audit attestations (nil = no signing)
 }
 
 // Server owns the gRPC runtime and all registered services.
@@ -190,6 +192,7 @@ type AuditConfirmation struct {
 type AuditResponse struct {
 	Confirmed bool   `json:"confirmed"`
 	AuditID   string `json:"audit_id"`
+	Signature string `json:"signature,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
 
@@ -426,7 +429,7 @@ func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (inter
 
 	auditID := fmt.Sprintf("audit-%d", s.seq.Add(1))
 
-	s.deps.Ledger.Record(models.AuditEntry{
+	entry, err := s.deps.Ledger.Record(models.AuditEntry{
 		AgentID:           agentID,
 		Component:         "kernel.grpc",
 		Action:            "audit_confirmed",
@@ -434,10 +437,19 @@ func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (inter
 		IntentFingerprint: intentHash,
 		Details:           details,
 	})
+	if err != nil {
+		return &AuditResponse{Error: err.Error()}, status.Errorf(codes.Internal, "record audit: %v", err)
+	}
+
+	var sig string
+	if s.deps.Signer != nil {
+		sig = s.deps.Signer.Sign([]byte(entry.Attestation))
+	}
 
 	return &AuditResponse{
 		Confirmed: true,
 		AuditID:   auditID,
+		Signature: sig,
 	}, nil
 }
 
