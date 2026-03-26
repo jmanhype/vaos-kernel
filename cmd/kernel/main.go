@@ -29,6 +29,68 @@ import (
 	"vaos-kernel/pkg/models"
 )
 
+// sigStore holds signatures keyed by audit entry ID (computed after Ledger.Record).
+type sigStore struct{ m sync.Map }
+
+func (s *sigStore) Put(id, sig string) { s.m.Store(id, sig) }
+func (s *sigStore) Get(id string) string {
+	v, ok := s.m.Load(id)
+	if !ok {
+		return ""
+	}
+	return v.(string)
+}
+
+func parseIntParam(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n := 0
+	for _, c := range s {
+		if c < 0 || c > 9 {
+			return def
+		}
+		n = n*10 + int(c-0)
+	}
+	if n <= 0 {
+		return def
+	}
+	return n
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func filterEntries(all []models.AuditEntry, agentID, action, status, component string) []models.AuditEntry {
+	if agentID == "" && action == "" && status == "" && component == "" {
+		return all
+	}
+	var out []models.AuditEntry
+	for _, e := range all {
+		if agentID != "" && e.AgentID != agentID {
+			continue
+		}
+		if action != "" && e.Action != action {
+			continue
+		}
+		if status != "" && e.Status != status {
+			continue
+		}
+		if component != "" && e.Component != component {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 func main() {
 	// Mode selection: "sync" (Mode A) or "async" (Mode B)
 	mode := os.Getenv("VAOS_KERNEL_MODE")
@@ -196,12 +258,15 @@ func main() {
 	}
 	log.Printf("Ed25519 signer ready (pubkey: %s...)", signer.PublicKeyHex()[:16])
 
+	var sigs sigStore
+
 	server, err := kgrpc.NewServer(kgrpc.Dependencies{
 		Registry: registry,
 		Issuer:   issuer,
 		Hasher:   hash.Hasher{},
 		Ledger:   ledger,
 		Signer:   signer,
+		OnSigned: func(entryID, sig string) { sigs.Put(entryID, sig) },
 	})
 	if err != nil {
 		log.Fatalf("create grpc server: %v", err)
@@ -373,14 +438,79 @@ func main() {
 		}
 
 		sig := signer.Sign([]byte(entry.Attestation))
+		auditID := fmt.Sprintf("http-audit-%d", time.Now().UnixNano())
+		sigs.Put(auditID, sig)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"confirmed": true,
-			"audit_id":  fmt.Sprintf("http-audit-%d", time.Now().UnixNano()),
-			"signature": sig,
+			"confirmed":   true,
+			"audit_id":    auditID,
+			"signature":   sig,
+			"attestation": entry.Attestation,
 		})
 	}))
+	// Audit entries query endpoint — requires auth (paginated)
+	mux.HandleFunc("/api/audit/entries", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		q := r.URL.Query()
+		page := parseIntParam(q.Get("page"), 1)
+		perPage := clamp(parseIntParam(q.Get("per_page"), 20), 1, 100)
+
+		all := ledger.Entries()
+		filtered := filterEntries(all, q.Get("agent_id"), q.Get("action"), q.Get("status"), q.Get("component"))
+
+		total := len(filtered)
+		start := (page - 1) * perPage
+		if start > total {
+			start = total
+		}
+		end := start + perPage
+		if end > total {
+			end = total
+		}
+		pageEntries := filtered[start:end]
+
+		pages := total / perPage
+		if total%perPage != 0 {
+			pages++
+		}
+
+		// Attach signature if available
+		type entryWithSig struct {
+			models.AuditEntry
+			Signature string `json:"signature,omitempty"`
+		}
+		out := make([]entryWithSig, len(pageEntries))
+		for i, e := range pageEntries {
+			out[i] = entryWithSig{AuditEntry: e, Signature: sigs.Get(e.ID)}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"entries":  out,
+			"total":    total,
+			"page":     page,
+			"per_page": perPage,
+			"pages":    pages,
+		})
+	}))
+	// Audit chain + signature replay verification — no auth (public verifiability)
+	mux.HandleFunc("/api/audit/verify", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		entries := ledger.Entries()
+		sigFn := func(e models.AuditEntry) string { return sigs.Get(e.ID) }
+		verifyFn := func(data []byte, sigHex string) bool { return signer.Verify(data, sigHex) }
+		result := audit.Replay(entries, sigFn, verifyFn)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	})
 	// Agent list endpoint — requires auth
 	mux.HandleFunc("/api/agents", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		agents := registry.ListAll()

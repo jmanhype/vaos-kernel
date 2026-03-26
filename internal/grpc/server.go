@@ -28,6 +28,7 @@ type Dependencies struct {
 	Hasher   hash.Hasher
 	Ledger   audit.Recorder
 	Signer   *signing.Signer // Ed25519 signer for audit attestations (nil = no signing)
+	OnSigned func(entryID, sig string) // optional callback after signing (nil = noop)
 }
 
 // Server owns the gRPC runtime and all registered services.
@@ -129,7 +130,7 @@ type TokenResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at"`
 	Scope     string `json:"scope"`
-	Error     string `json:"error,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type TelemetryRequest struct {
@@ -190,10 +191,11 @@ type AuditConfirmation struct {
 }
 
 type AuditResponse struct {
-	Confirmed bool   `json:"confirmed"`
-	AuditID   string `json:"audit_id"`
-	Signature string `json:"signature,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Confirmed   bool   `json:"confirmed"`
+	AuditID     string `json:"audit_id"`
+	Signature   string `json:"signature,omitempty"`
+	Attestation string `json:"attestation,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type SwarmIntentRequest struct {
@@ -444,12 +446,16 @@ func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (inter
 	var sig string
 	if s.deps.Signer != nil {
 		sig = s.deps.Signer.Sign([]byte(entry.Attestation))
+		if s.deps.OnSigned != nil {
+			s.deps.OnSigned(auditID, sig)
+		}
 	}
 
 	return &AuditResponse{
-		Confirmed: true,
-		AuditID:   auditID,
-		Signature: sig,
+		Confirmed:   true,
+		AuditID:     auditID,
+		Signature:   sig,
+		Attestation: entry.Attestation,
 	}, nil
 }
 
