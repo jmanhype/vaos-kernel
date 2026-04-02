@@ -1,7 +1,7 @@
 GO ?= go
 PROTO_DIR := proto
 
-.PHONY: build proto test clean
+.PHONY: build proto test clean mcp
 
 build:
 	$(GO) build ./...
@@ -14,3 +14,6 @@ test:
 
 clean:
 	$(GO) clean ./...
+
+mcp:
+	$(GO) build -o bin/vaos-mcp ./cmd/mcp/

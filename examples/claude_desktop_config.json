@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "vaos-kernel": {
+      "command": "/Users/batmanosama/Projects/vaos-kernel/bin/vaos-mcp",
+      "args": [],
+      "env": {
+        "VAOS_JWT_SECRET": "your-secret-here-change-in-production"
+      }
+    }
+  }
+}
