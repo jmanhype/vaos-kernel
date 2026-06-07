@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,6 +15,9 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"vaos-kernel/internal/audit"
+	cruciblev1 "vaos-kernel/internal/grpc/gen/cruciblev1"
+	interfacev1 "vaos-kernel/internal/grpc/gen/interfacev1"
+	swarmv1 "vaos-kernel/internal/grpc/gen/swarmv1"
 	"vaos-kernel/internal/hash"
 	kjwt "vaos-kernel/internal/jwt"
 	"vaos-kernel/internal/nhi"
@@ -27,18 +31,23 @@ type Dependencies struct {
 	Issuer   *kjwt.Issuer
 	Hasher   hash.Hasher
 	Ledger   audit.Recorder
-	Signer   *signing.Signer // Ed25519 signer for audit attestations (nil = no signing)
-	OnSigned func(entryID, sig string) // optional callback after signing (nil = noop)
+	Signer   *signing.Signer
+	OnSigned func(entryID, sig string)
 }
 
-// Server owns the gRPC runtime and all registered services.
+// Server owns the gRPC runtime and implements all generated services.
 type Server struct {
+	swarmv1.UnimplementedKernelServiceServer
+	cruciblev1.UnimplementedSandboxControlServer
+	interfacev1.UnimplementedInterfaceServiceServer
+
 	grpcServer *basegrpc.Server
 	deps       Dependencies
 	seq        atomic.Uint64
+	sandboxes  sync.Map // sandbox ID -> intent fingerprint
 }
 
-// NewServer wires the kernel service endpoints into a gRPC server.
+// NewServer wires the generated protobuf services into a gRPC server.
 func NewServer(deps Dependencies) (*Server, error) {
 	if deps.Registry == nil {
 		return nil, errors.New("new grpc server: registry is required")
@@ -54,395 +63,116 @@ func NewServer(deps Dependencies) (*Server, error) {
 		grpcServer: basegrpc.NewServer(),
 		deps:       deps,
 	}
-	
-	// Register KernelService for VAS-Swarm communication
-	ks := &kernelServiceServer{}
-	s.grpcServer.RegisterService(&basegrpc.ServiceDesc{
-		ServiceName: "vaos.kernel.KernelService",
-		HandlerType: (*kernelService)(nil),
-		Methods: []basegrpc.MethodDesc{
-			{
-				MethodName: "RequestToken",
-				Handler:    s.wrapKernelUnary(s.handleRequestToken),
-			},
-			{
-				MethodName: "SubmitTelemetry",
-				Handler:    s.wrapKernelUnary(s.handleSubmitTelemetry),
-			},
-			{
-				MethodName: "SubmitRoutingLog",
-				Handler:    s.wrapKernelUnary(s.handleSubmitRoutingLog),
-			},
-			{
-				MethodName: "ConfirmAudit",
-				Handler:    s.wrapKernelUnary(s.handleConfirmAudit),
-			},
-			{
-				MethodName: "ExecuteIntent",
-				Handler:    s.wrapKernelUnary(s.handleExecuteIntent),
-			},
-		},
-	}, ks)
-	
-	// Register SandboxControl service for VAS-Crucible communication
-	sc := &sandboxControlServer{}
-	s.grpcServer.RegisterService(&basegrpc.ServiceDesc{
-		ServiceName: "vaos.kernel.crucible.v1.SandboxControl",
-		HandlerType: (*sandboxControl)(nil),
-		Methods: []basegrpc.MethodDesc{
-			{
-				MethodName: "CreateSandbox",
-				Handler:    s.wrapCrucibleUnary(s.handleCreateSandbox),
-			},
-			{
-				MethodName: "ExecuteCode",
-				Handler:    s.wrapCrucibleUnary(s.handleExecuteCode),
-			},
-			{
-				MethodName: "TerminateSandbox",
-				Handler:    s.wrapCrucibleUnary(s.handleTerminateSandbox),
-			},
-			{
-				MethodName: "Heartbeat",
-				Handler:    s.wrapCrucibleUnary(s.handleHeartbeat),
-			},
-		},
-	}, sc)
-	
+	swarmv1.RegisterKernelServiceServer(s.grpcServer, s)
+	cruciblev1.RegisterSandboxControlServer(s.grpcServer, s)
+	interfacev1.RegisterInterfaceServiceServer(s.grpcServer, s)
 	return s, nil
 }
 
-type kernelService interface{}
-type sandboxControl interface{}
-
-type kernelServiceServer struct{}
-type sandboxControlServer struct{}
-
-// Request/Response types (in production, these would be generated from proto)
-type TokenRequest struct {
-	AgentID    string            `json:"agent_id"`
-	IntentHash string            `json:"intent_hash"`
-	ActionType string            `json:"action_type"`
-	Metadata   map[string]string `json:"metadata"`
-}
-
-type TokenResponse struct {
-	Token     string `json:"token"`
-	ExpiresAt int64  `json:"expires_at"`
-	Scope     string `json:"scope"`
-	Error       string `json:"error,omitempty"`
-}
-
-type TelemetryRequest struct {
-	AgentID        string            `json:"agent_id"`
-	Timestamp      int64             `json:"timestamp"`
-	Status         string            `json:"status"`
-	CPUUsage       float32           `json:"cpu_usage"`
-	MemoryUsage    float32           `json:"memory_usage"`
-	TasksCompleted int32             `json:"tasks_completed"`
-	TasksFailed    int32             `json:"tasks_failed"`
-	AvgTaskDuration float32          `json:"avg_task_duration"`
-	TokensUsed     int32             `json:"tokens_used"`
-	CostEstimate   float32           `json:"cost_estimate"`
-	CustomMetrics  map[string]string `json:"custom_metrics"`
-}
-
-type TelemetryResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-}
-
-type RoutingLogRequest struct {
-	SessionID   string  `json:"session_id"`
-	AgentID     string  `json:"agent_id"`
-	Timestamp   int64   `json:"timestamp"`
-	Mode        string  `json:"mode"`
-	Genre       string  `json:"genre"`
-	Type        string  `json:"type"`
-	Format      string  `json:"format"`
-	Weight      float32 `json:"weight"`
-	Confidence  string  `json:"confidence"`
-	Tier        string  `json:"tier"`
-	Model       string  `json:"model"`
-	Provider    string  `json:"provider"`
-	IntentHash  string  `json:"intent_hash"`
-}
-
-type RoutingLogResponse struct {
-	Success       bool   `json:"success"`
-	Message       string `json:"message"`
-	CorrelationID string `json:"correlation_id"`
-}
-
-type AuditConfirmation struct {
-	AgentID        string            `json:"agent_id"`
-	ActionID       string            `json:"action_id"`
-	IntentHash     string            `json:"intent_hash"`
-	JWTToken       string            `json:"jwt_token"`
-	Attributable   bool              `json:"attributable"`
-	Legible        bool              `json:"legible"`
-	Contemporaneous bool             `json:"contemporaneous"`
-	Original       bool              `json:"original"`
-	Accurate       bool              `json:"accurate"`
-	PerformedAt    int64             `json:"performed_at"`
-	PerformedBy    string            `json:"performed_by"`
-	Method         string            `json:"method"`
-	Context        map[string]string `json:"context"`
-}
-
-type AuditResponse struct {
-	Confirmed   bool   `json:"confirmed"`
-	AuditID     string `json:"audit_id"`
-	Signature   string `json:"signature,omitempty"`
-	Attestation string `json:"attestation,omitempty"`
-	Error       string `json:"error,omitempty"`
-}
-
-type SwarmIntentRequest struct {
-	AgentID    string            `json:"agent_id"`
-	Token      string            `json:"token"`
-	Action     string            `json:"action"`
-	Resource   string            `json:"resource"`
-	Parameters map[string]string `json:"parameters"`
-}
-
-type SwarmIntentResponse struct {
-	ExecutionID string `json:"execution_id"`
-	Status      string `json:"status"`
-	Detail      string `json:"detail"`
-}
-
-// Crucible types
-type CreateSandboxRequest struct {
-	AgentID    string         `json:"agent_id"`
-	JWT        string         `json:"jwt"`
-	IntentHash string         `json:"intent_hash"`
-	Limits     ResourceLimits `json:"limits"`
-}
-
-type ResourceLimits struct {
-	CPUCores      int32 `json:"cpu_cores"`
-	MemoryMB      int64 `json:"memory_mb"`
-	NetworkEnabled bool  `json:"network_enabled"`
-}
-
-type CreateSandboxResponse struct {
-	SandboxID string `json:"sandbox_id"`
-	PTYPath   string `json:"pty_path"`
-	CreatedAt int64  `json:"created_at"`
-}
-
-type ExecuteRequest struct {
-	SandboxID string `json:"sandbox_id"`
-	JWT       string `json:"jwt"`
-	Code      string `json:"code"`
-	Language  string `json:"language"`
-}
-
-type ExecuteResponse struct {
-	ExitCode   int32  `json:"exit_code"`
-	Stdout     string `json:"stdout"`
-	Stderr     string `json:"stderr"`
-	DurationMS int64  `json:"duration_ms"`
-}
-
-type TerminateRequest struct {
-	SandboxID string `json:"sandbox_id"`
-	JWT       string `json:"jwt"`
-}
-
-type HeartbeatRequest struct {
-	SandboxID string `json:"sandbox_id"`
-	JWT       string `json:"jwt"`
-}
-
-type HeartbeatResponse struct {
-	Alive    bool  `json:"alive"`
-	LastSeen int64 `json:"last_seen"`
-}
-
-func (s *Server) wrapKernelUnary(fn func(context.Context, interface{}) (interface{}, error)) func(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor basegrpc.UnaryServerInterceptor) (interface{}, error) {
-	return func(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor basegrpc.UnaryServerInterceptor) (interface{}, error) {
-		var req interface{}
-		if err := dec(&req); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "decode request: %v", err)
-		}
-		handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-			return fn(ctx, req)
-		}
-		if interceptor == nil {
-			return handler(ctx, req)
-		}
-		info := &basegrpc.UnaryServerInfo{
-			Server:     srv,
-			FullMethod: "/vaos.kernel.KernelService/execute",
-		}
-		return interceptor(ctx, req, info, handler)
-	}
-}
-
-func (s *Server) wrapCrucibleUnary(fn func(context.Context, interface{}) (interface{}, error)) func(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor basegrpc.UnaryServerInterceptor) (interface{}, error) {
-	return func(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor basegrpc.UnaryServerInterceptor) (interface{}, error) {
-		var req interface{}
-		if err := dec(&req); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "decode request: %v", err)
-		}
-		handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-			return fn(ctx, req)
-		}
-		if interceptor == nil {
-			return handler(ctx, req)
-		}
-		info := &basegrpc.UnaryServerInfo{
-			Server:     srv,
-			FullMethod: "/vaos.kernel.crucible.v1.SandboxControl/execute",
-		}
-		return interceptor(ctx, req, info, handler)
-	}
-}
-
-// KernelService handlers
-
-func (s *Server) handleRequestToken(ctx context.Context, req interface{}) (interface{}, error) {
-	// Type assert to map for dynamic decoding
-	reqMap, ok := req.(map[string]interface{})
-	if !ok {
-		return &TokenResponse{Error: "invalid request type"}, status.Errorf(codes.InvalidArgument, "invalid request type")
+func (s *Server) RequestToken(_ context.Context, req *swarmv1.TokenRequest) (*swarmv1.TokenResponse, error) {
+	if req == nil || req.AgentId == "" || req.IntentHash == "" {
+		return nil, status.Error(codes.InvalidArgument, "agent_id and intent_hash are required")
 	}
 
-	agentID, _ := reqMap["agent_id"].(string)
-	intentHash, _ := reqMap["intent_hash"].(string)
-	actionType, _ := reqMap["action_type"].(string)
-
-	if agentID == "" || intentHash == "" {
-		return &TokenResponse{Error: "agent_id and intent_hash are required"}, status.Errorf(codes.InvalidArgument, "agent_id and intent_hash are required")
-	}
-
-	// Hash the intent using the real hasher
-	hashedIntent := s.deps.Hasher.HashRaw(intentHash)
-
-	// Issue a real JWT via the Issuer
-	token, record, err := s.deps.Issuer.Issue(agentID, hashedIntent)
+	token, record, err := s.deps.Issuer.Issue(req.AgentId, req.IntentHash)
 	if err != nil {
-		s.deps.Ledger.Record(models.AuditEntry{
-			AgentID:           agentID,
-			Component:         "kernel.grpc",
-			Action:            "token_request_failed",
-			Status:            "error",
-			IntentFingerprint: intentHash,
-			Details:           map[string]string{"error": err.Error()},
-		})
-		return &TokenResponse{Error: err.Error()}, status.Errorf(codes.Internal, "issue token: %v", err)
+		s.recordFailure(req.AgentId, req.IntentHash, "token_request_failed", err)
+		if _, lookupErr := s.deps.Registry.GetAgent(req.AgentId); lookupErr != nil {
+			return nil, status.Errorf(codes.NotFound, "agent: %v", lookupErr)
+		}
+		return nil, status.Errorf(codes.Internal, "issue token: %v", err)
 	}
 
-	// Record successful issuance in audit ledger
-	s.deps.Ledger.Record(models.AuditEntry{
-		AgentID:           agentID,
+	if _, err := s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:           req.AgentId,
 		Component:         "kernel.grpc",
 		Action:            "token_issued",
 		Status:            "success",
-		IntentFingerprint: hashedIntent,
+		IntentFingerprint: req.IntentHash,
 		Details: map[string]string{
 			"token_id":    record.TokenID,
-			"action_type": actionType,
+			"action_type": req.ActionType,
 			"ttl":         "60s",
 		},
-	})
+	}); err != nil {
+		return nil, status.Errorf(codes.Internal, "audit ledger: %v", err)
+	}
 
-	return &TokenResponse{
+	return &swarmv1.TokenResponse{
 		Token:     token,
 		ExpiresAt: record.ExpiresAt.Unix(),
-		Scope:     actionType,
+		Scope:     req.ActionType,
 	}, nil
 }
 
-func (s *Server) handleSubmitTelemetry(ctx context.Context, req interface{}) (interface{}, error) {
-	reqMap, _ := req.(map[string]interface{})
-	agentID, _ := reqMap["agent_id"].(string)
-
-	s.deps.Ledger.Record(models.AuditEntry{
-		AgentID:   agentID,
+func (s *Server) SubmitTelemetry(_ context.Context, req *swarmv1.TelemetryRequest) (*swarmv1.TelemetryResponse, error) {
+	if req == nil || req.AgentId == "" {
+		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
+	}
+	if _, err := s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:   req.AgentId,
 		Component: "kernel.grpc",
 		Action:    "telemetry_received",
 		Status:    "success",
-	})
-
-	return &TelemetryResponse{
-		Success: true,
-		Message: "telemetry received",
-	}, nil
+	}); err != nil {
+		return nil, status.Errorf(codes.Internal, "audit ledger: %v", err)
+	}
+	return &swarmv1.TelemetryResponse{Success: true, Message: "telemetry received"}, nil
 }
 
-func (s *Server) handleSubmitRoutingLog(ctx context.Context, req interface{}) (interface{}, error) {
-	reqMap, _ := req.(map[string]interface{})
-	agentID, _ := reqMap["agent_id"].(string)
-	correlationID := fmt.Sprintf("routing-%d", s.seq.Add(1))
-
-	s.deps.Ledger.Record(models.AuditEntry{
-		AgentID:   agentID,
+func (s *Server) SubmitRoutingLog(_ context.Context, req *swarmv1.RoutingLogRequest) (*swarmv1.RoutingLogResponse, error) {
+	if req == nil || req.AgentId == "" {
+		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
+	}
+	correlationID := fmt.Sprintf("routing-%06d", s.seq.Add(1))
+	if _, err := s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:   req.AgentId,
 		Component: "kernel.grpc",
 		Action:    "routing_log_received",
 		Status:    "success",
 		Details:   map[string]string{"correlation_id": correlationID},
-	})
-
-	return &RoutingLogResponse{
+	}); err != nil {
+		return nil, status.Errorf(codes.Internal, "audit ledger: %v", err)
+	}
+	return &swarmv1.RoutingLogResponse{
 		Success:       true,
 		Message:       "routing log received",
-		CorrelationID: correlationID,
+		CorrelationId: correlationID,
 	}, nil
 }
 
-func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (interface{}, error) {
-	reqMap, _ := req.(map[string]interface{})
-	agentID, _ := reqMap["agent_id"].(string)
-	actionID, _ := reqMap["action_id"].(string)
-	intentHash, _ := reqMap["intent_hash"].(string)
-	method, _ := reqMap["method"].(string)
-	performedBy, _ := reqMap["performed_by"].(string)
+func (s *Server) ConfirmAudit(_ context.Context, req *swarmv1.AuditConfirmation) (*swarmv1.AuditResponse, error) {
+	if req == nil || req.AgentId == "" || req.ActionId == "" || req.IntentHash == "" {
+		return nil, status.Error(codes.InvalidArgument, "agent_id, action_id, and intent_hash are required")
+	}
 
-	// ALCOA+ booleans
-	attributable, _ := reqMap["attributable"].(bool)
-	legible, _ := reqMap["legible"].(bool)
-	contemporaneous, _ := reqMap["contemporaneous"].(bool)
-	original, _ := reqMap["original"].(bool)
-	accurate, _ := reqMap["accurate"].(bool)
-
-	// Build details map from all fields
 	details := map[string]string{
-		"action_id":       actionID,
-		"method":          method,
-		"performed_by":    performedBy,
-		"attributable":    fmt.Sprintf("%t", attributable),
-		"legible":         fmt.Sprintf("%t", legible),
-		"contemporaneous": fmt.Sprintf("%t", contemporaneous),
-		"original":        fmt.Sprintf("%t", original),
-		"accurate":        fmt.Sprintf("%t", accurate),
+		"action_id":       req.ActionId,
+		"method":          req.Method,
+		"performed_by":    req.PerformedBy,
+		"attributable":    fmt.Sprintf("%t", req.Attributable),
+		"legible":         fmt.Sprintf("%t", req.Legible),
+		"contemporaneous": fmt.Sprintf("%t", req.Contemporaneous),
+		"original":        fmt.Sprintf("%t", req.Original),
+		"accurate":        fmt.Sprintf("%t", req.Accurate),
 	}
-
-	// Extract context sub-map
-	if ctxMap, ok := reqMap["context"].(map[string]interface{}); ok {
-		for k, v := range ctxMap {
-			if vs, ok := v.(string); ok {
-				details["ctx_"+k] = vs
-			}
-		}
+	for key, value := range req.Context {
+		details["ctx_"+key] = value
 	}
-
-	auditID := fmt.Sprintf("audit-%d", s.seq.Add(1))
 
 	entry, err := s.deps.Ledger.Record(models.AuditEntry{
-		AgentID:           agentID,
+		AgentID:           req.AgentId,
 		Component:         "kernel.grpc",
 		Action:            "audit_confirmed",
 		Status:            "success",
-		IntentFingerprint: intentHash,
+		IntentFingerprint: req.IntentHash,
 		Details:           details,
 	})
 	if err != nil {
-		return &AuditResponse{Error: err.Error()}, status.Errorf(codes.Internal, "record audit: %v", err)
+		return nil, status.Errorf(codes.Internal, "audit ledger: %v", err)
 	}
 
+	auditID := fmt.Sprintf("audit-%06d", s.seq.Add(1))
 	var sig string
 	if s.deps.Signer != nil {
 		sig = s.deps.Signer.Sign([]byte(entry.Attestation))
@@ -451,68 +181,175 @@ func (s *Server) handleConfirmAudit(ctx context.Context, req interface{}) (inter
 			s.deps.OnSigned(entry.ID, sig)
 		}
 	}
-
-	return &AuditResponse{
+	return &swarmv1.AuditResponse{
 		Confirmed:   true,
-		AuditID:     auditID,
+		AuditId:     auditID,
 		Signature:   sig,
 		Attestation: entry.Attestation,
 	}, nil
 }
 
-func (s *Server) handleExecuteIntent(ctx context.Context, req interface{}) (interface{}, error) {
-	reqMap, _ := req.(map[string]interface{})
-	agentID, _ := reqMap["agent_id"].(string)
-	executionID := fmt.Sprintf("swarm-%d", s.seq.Add(1))
-
-	s.deps.Ledger.Record(models.AuditEntry{
-		AgentID:   agentID,
-		Component: "kernel.grpc",
-		Action:    "intent_executed",
-		Status:    "success",
-		Details:   map[string]string{"execution_id": executionID},
-	})
-
-	return &SwarmIntentResponse{
-		ExecutionID: executionID,
+func (s *Server) ExecuteIntent(ctx context.Context, req *swarmv1.SwarmIntentRequest) (*swarmv1.SwarmIntentResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	_, executionID, err := s.execute(ctx, "swarm", req.AgentId, req.Token, req.Action, req.Resource, req.Parameters)
+	if err != nil {
+		return nil, err
+	}
+	return &swarmv1.SwarmIntentResponse{
+		ExecutionId: executionID,
 		Status:      "coordinated",
 		Detail:      "swarm intent accepted",
 	}, nil
 }
 
-// SandboxControl handlers
-
-func (s *Server) handleCreateSandbox(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, type assert to CreateSandboxRequest
-	sandboxID := fmt.Sprintf("sandbox-%d", s.seq.Add(1))
-	return &CreateSandboxResponse{
-		SandboxID: sandboxID,
-		PTYPath:   "/dev/pts/" + sandboxID,
+func (s *Server) CreateSandbox(_ context.Context, req *cruciblev1.CreateSandboxRequest) (*cruciblev1.CreateSandboxResponse, error) {
+	if req == nil || req.AgentId == "" || req.IntentHash == "" || req.Jwt == "" {
+		return nil, status.Error(codes.InvalidArgument, "agent_id, jwt, and intent_hash are required")
+	}
+	if _, err := s.deps.Issuer.Verify(req.Jwt, req.IntentHash); err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "verify token: %v", err)
+	}
+	sandboxID := fmt.Sprintf("sandbox-%06d", s.seq.Add(1))
+	s.sandboxes.Store(sandboxID, req.IntentHash)
+	return &cruciblev1.CreateSandboxResponse{
+		SandboxId: sandboxID,
+		PtyPath:   "/dev/pts/" + sandboxID,
 		CreatedAt: time.Now().Unix(),
 	}, nil
 }
 
-func (s *Server) handleExecuteCode(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, execute code in sandbox
-	return &ExecuteResponse{
+func (s *Server) ExecuteCode(_ context.Context, req *cruciblev1.ExecuteRequest) (*cruciblev1.ExecuteResponse, error) {
+	if req == nil || req.SandboxId == "" || req.Jwt == "" {
+		return nil, status.Error(codes.InvalidArgument, "sandbox_id and jwt are required")
+	}
+	if err := s.verifySandbox(req.SandboxId, req.Jwt); err != nil {
+		return nil, err
+	}
+	return &cruciblev1.ExecuteResponse{
 		ExitCode:   0,
-		Stdout:     "code executed successfully",
-		Stderr:     "",
-		DurationMS: 100,
+		Stdout:     "code execution accepted",
+		DurationMs: 100,
 	}, nil
 }
 
-func (s *Server) handleTerminateSandbox(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, terminate sandbox
+func (s *Server) TerminateSandbox(_ context.Context, req *cruciblev1.TerminateRequest) (*emptypb.Empty, error) {
+	if req == nil || req.SandboxId == "" || req.Jwt == "" {
+		return nil, status.Error(codes.InvalidArgument, "sandbox_id and jwt are required")
+	}
+	if err := s.verifySandbox(req.SandboxId, req.Jwt); err != nil {
+		return nil, err
+	}
+	s.sandboxes.Delete(req.SandboxId)
 	return &emptypb.Empty{}, nil
 }
 
-func (s *Server) handleHeartbeat(ctx context.Context, req interface{}) (interface{}, error) {
-	// In production, check sandbox heartbeat
-	return &HeartbeatResponse{
-		Alive:    true,
-		LastSeen: time.Now().Unix(),
+func (s *Server) Heartbeat(_ context.Context, req *cruciblev1.HeartbeatRequest) (*cruciblev1.HeartbeatResponse, error) {
+	if req == nil || req.SandboxId == "" || req.Jwt == "" {
+		return nil, status.Error(codes.InvalidArgument, "sandbox_id and jwt are required")
+	}
+	if err := s.verifySandbox(req.SandboxId, req.Jwt); err != nil {
+		return nil, err
+	}
+	return &cruciblev1.HeartbeatResponse{Alive: true, LastSeen: time.Now().Unix()}, nil
+}
+
+func (s *Server) ExecuteTask(ctx context.Context, req *cruciblev1.CrucibleTaskRequest) (*cruciblev1.CrucibleTaskResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	entry, executionID, err := s.execute(ctx, "crucible", req.AgentId, req.Token, req.Action, req.Resource, req.Parameters)
+	if err != nil {
+		return nil, err
+	}
+	return &cruciblev1.CrucibleTaskResponse{
+		ExecutionId: executionID,
+		Status:      "processed",
+		Attestation: entry.Attestation,
 	}, nil
+}
+
+func (s *Server) Dispatch(ctx context.Context, req *interfacev1.InterfaceDispatchRequest) (*interfacev1.InterfaceDispatchResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	_, executionID, err := s.execute(ctx, "interface", req.AgentId, req.Token, req.Action, req.Resource, req.Parameters)
+	if err != nil {
+		return nil, err
+	}
+	return &interfacev1.InterfaceDispatchResponse{
+		ExecutionId:    executionID,
+		Status:         "dispatched",
+		RenderedOutput: "intent dispatched to interface",
+	}, nil
+}
+
+func (s *Server) execute(
+	_ context.Context,
+	component, agentID, token, action, resource string,
+	parameters map[string]string,
+) (models.AuditEntry, string, error) {
+	intent := models.IntentRequest{
+		AgentID:    agentID,
+		Action:     action,
+		Resource:   resource,
+		Parameters: parameters,
+	}
+	fingerprint, err := s.deps.Hasher.HashIntent(intent)
+	if err != nil {
+		return models.AuditEntry{}, "", status.Errorf(codes.InvalidArgument, "hash intent: %v", err)
+	}
+	if _, err := s.deps.Issuer.Verify(token, fingerprint); err != nil {
+		return models.AuditEntry{}, "", status.Errorf(codes.Unauthenticated, "verify token: %v", err)
+	}
+
+	executionID := fmt.Sprintf("%s-%06d", component, s.seq.Add(1))
+	entry, err := s.deps.Ledger.Record(models.AuditEntry{
+		ID:                executionID,
+		AgentID:           agentID,
+		IntentFingerprint: fingerprint,
+		Action:            action,
+		Component:         component,
+		Status:            "success",
+		Details: map[string]string{
+			"resource": resource,
+			"grpc":     "true",
+		},
+	})
+	if err != nil {
+		return models.AuditEntry{}, "", status.Errorf(codes.Internal, "audit ledger: %v", err)
+	}
+	return entry, executionID, nil
+}
+
+func (s *Server) recordFailure(agentID, fingerprint, action string, cause error) {
+	if agentID == "" {
+		return
+	}
+	_, _ = s.deps.Ledger.Record(models.AuditEntry{
+		AgentID:           agentID,
+		Component:         "kernel.grpc",
+		Action:            action,
+		Status:            "error",
+		IntentFingerprint: fingerprint,
+		Details:           map[string]string{"error": cause.Error()},
+	})
+}
+
+func (s *Server) verifySandbox(sandboxID, token string) error {
+	value, ok := s.sandboxes.Load(sandboxID)
+	if !ok {
+		return status.Error(codes.NotFound, "sandbox not found")
+	}
+	fingerprint, ok := value.(string)
+	if !ok || fingerprint == "" {
+		return status.Error(codes.Internal, "sandbox intent binding is invalid")
+	}
+	if _, err := s.deps.Issuer.Verify(token, fingerprint); err != nil {
+		return status.Errorf(codes.Unauthenticated, "verify token: %v", err)
+	}
+	return nil
 }
 
 // Serve starts the underlying gRPC server.

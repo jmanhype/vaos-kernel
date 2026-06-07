@@ -18,7 +18,7 @@ func NewClient(conn *basegrpc.ClientConn) *Client {
 
 func (c *Client) ExecuteSwarmIntent(ctx context.Context, req *Request) (*Response, error) {
 	resp := &Response{}
-	if err := c.conn.Invoke(ctx, "/vaos.kernel.swarm.v1.SwarmService/ExecuteIntent", req, resp); err != nil {
+	if err := c.conn.Invoke(ctx, "/vaos.kernel.KernelService/ExecuteIntent", req, resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -26,7 +26,7 @@ func (c *Client) ExecuteSwarmIntent(ctx context.Context, req *Request) (*Respons
 
 func (c *Client) ExecuteCrucibleTask(ctx context.Context, req *Request) (*Response, error) {
 	resp := &Response{}
-	if err := c.conn.Invoke(ctx, "/vaos.kernel.crucible.v1.CrucibleService/ExecuteTask", req, resp); err != nil {
+	if err := c.conn.Invoke(ctx, "/vaos.kernel.crucible.v1.SandboxControl/ExecuteTask", req, resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -39,4 +39,3 @@ func (c *Client) DispatchInterface(ctx context.Context, req *Request) (*Response
 	}
 	return resp, nil
 }
-

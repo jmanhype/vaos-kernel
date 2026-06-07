@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package vaos.kernel.crucible.v1;
 
-option go_package = "vaos-kernel/internal/grpc/gen/cruciblev1";
+option go_package = "vaos-kernel/internal/grpc/gen/cruciblev1;cruciblev1";
 
 import "google/protobuf/empty.proto";
 

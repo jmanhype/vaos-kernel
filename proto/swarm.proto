@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package vaos.kernel;
 
-option go_package = "github.com/vaos/kernel/pkg/grpc";
+option go_package = "vaos-kernel/internal/grpc/gen/swarmv1;swarmv1";
 
 // Kernel Service for VAS-Swarm communication
 service KernelService {
@@ -121,6 +121,8 @@ message AuditResponse {
   bool confirmed = 1;
   string audit_id = 2;
   string error = 3;
+  string signature = 4;
+  string attestation = 5;
 }
 
 // Legacy: Swarm intent execution (backward compatibility)

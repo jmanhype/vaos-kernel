@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,11 +20,11 @@ import (
 
 	kamqp "vaos-kernel/internal/amqp"
 	"vaos-kernel/internal/audit"
-	"vaos-kernel/internal/signing"
 	kgrpc "vaos-kernel/internal/grpc"
 	"vaos-kernel/internal/hash"
 	kjwt "vaos-kernel/internal/jwt"
 	"vaos-kernel/internal/nhi"
+	"vaos-kernel/internal/signing"
 	"vaos-kernel/internal/websocket"
 	"vaos-kernel/pkg/db"
 	"vaos-kernel/pkg/models"
@@ -89,6 +90,16 @@ func filterEntries(all []models.AuditEntry, agentID, action, status, component s
 		out = append(out, e)
 	}
 	return out
+}
+
+func writeJSON(w http.ResponseWriter, status int, value interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
 }
 
 func main() {
@@ -283,7 +294,9 @@ func main() {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if apiSecret != "" {
 				auth := r.Header.Get("Authorization")
-				if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != apiSecret {
+				token := strings.TrimPrefix(auth, "Bearer ")
+				if !strings.HasPrefix(auth, "Bearer ") ||
+					subtle.ConstantTimeCompare([]byte(token), []byte(apiSecret)) != 1 {
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
 				}
@@ -320,13 +333,17 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", wsServer.HandleWebSocket)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	})
 	// Token endpoint for Swarm HTTP fallback — requires auth
 	mux.HandleFunc("/api/token", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
-			http.Error(w, "method not allowed", 405)
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		var req struct {
@@ -335,7 +352,15 @@ func main() {
 			ActionType string `json:"action_type"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", 400)
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if req.AgentID == "" || req.IntentHash == "" {
+			writeJSONError(w, http.StatusBadRequest, "agent_id and intent_hash are required")
+			return
+		}
+		if _, err := registry.GetAgent(req.AgentID); err != nil {
+			writeJSONError(w, http.StatusNotFound, "agent not found")
 			return
 		}
 		token, record, err := issuer.Issue(req.AgentID, req.IntentHash)
@@ -348,13 +373,12 @@ func main() {
 				IntentFingerprint: req.IntentHash,
 				Details:           map[string]string{"error": err.Error()},
 			})
-			w.WriteHeader(500)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
 		// Record successful token issuance to audit ledger
-		ledger.Record(models.AuditEntry{
+		if _, err := ledger.Record(models.AuditEntry{
 			AgentID:           req.AgentID,
 			Component:         "kernel.http",
 			Action:            "token_issued",
@@ -365,31 +389,36 @@ func main() {
 				"action_type": req.ActionType,
 				"ttl":         "60s",
 			},
-		})
+		}); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "record token audit: "+err.Error())
+			return
+		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"token":      token,
-			"token_id":   record.TokenID,
-			"agent_id":   record.AgentID,
-			"expires_at": record.ExpiresAt,
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"token":       token,
+			"token_id":    record.TokenID,
+			"agent_id":    record.AgentID,
+			"expires_at":  record.ExpiresAt,
 			"ttl_seconds": 60,
 		})
 	}))
 	// Public key endpoint — no auth required (public key is public)
 	mux.HandleFunc("/api/audit/pubkey", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"public_key": signer.PublicKeyHex()})
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"public_key": signer.PublicKeyHex()})
 	})
 	// Audit confirmation endpoint - requires auth (receipt chain)
 	mux.HandleFunc("/api/audit", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
-			http.Error(w, "method not allowed", 405)
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		var params map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			http.Error(w, "bad request", 400)
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
 
@@ -403,6 +432,14 @@ func main() {
 		contemporaneous, _ := params["contemporaneous"].(bool)
 		original, _ := params["original"].(bool)
 		accurate, _ := params["accurate"].(bool)
+		if agentID == "" || actionID == "" || intentHash == "" {
+			writeJSONError(w, http.StatusBadRequest, "agent_id, action_id, and intent_hash are required")
+			return
+		}
+		if _, err := registry.GetAgent(agentID); err != nil {
+			writeJSONError(w, http.StatusNotFound, "agent not found")
+			return
+		}
 
 		details := map[string]string{
 			"action_id":       actionID,
@@ -432,8 +469,7 @@ func main() {
 			Details:           details,
 		})
 		if err != nil {
-			w.WriteHeader(500)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
@@ -442,8 +478,7 @@ func main() {
 		sigs.Put(auditID, sig)
 		sigs.Put(entry.ID, sig)
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"confirmed":   true,
 			"audit_id":    auditID,
 			"signature":   sig,
@@ -453,7 +488,7 @@ func main() {
 	// Audit entries query endpoint — requires auth (paginated)
 	mux.HandleFunc("/api/audit/entries", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
-			http.Error(w, "method not allowed", 405)
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		q := r.URL.Query()
@@ -489,8 +524,7 @@ func main() {
 			out[i] = entryWithSig{AuditEntry: e, Signature: sigs.Get(e.ID)}
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"entries":  out,
 			"total":    total,
 			"page":     page,
@@ -501,7 +535,7 @@ func main() {
 	// Audit chain + signature replay verification — no auth (public verifiability)
 	mux.HandleFunc("/api/audit/verify", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
-			http.Error(w, "method not allowed", 405)
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		entries := ledger.Entries()
@@ -509,14 +543,16 @@ func main() {
 		verifyFn := func(data []byte, sigHex string) bool { return signer.Verify(data, sigHex) }
 		result := audit.Replay(entries, sigFn, verifyFn)
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+		writeJSON(w, http.StatusOK, result)
 	})
 	// Agent list endpoint — requires auth
 	mux.HandleFunc("/api/agents", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
 		agents := registry.ListAll()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"agents": agents})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"agents": agents})
 	}))
 
 	wsAddr := os.Getenv("VAOS_KERNEL_WS_ADDR")

@@ -17,8 +17,8 @@ type ReplayResult struct {
 // verifyFn checks the raw attestation bytes against a hex signature.
 // Either may be nil to skip signature verification entirely.
 func Replay(
-	entries  []models.AuditEntry,
-	sigFn    func(models.AuditEntry) string,
+	entries []models.AuditEntry,
+	sigFn func(models.AuditEntry) string,
 	verifyFn func(data []byte, sigHex string) bool,
 ) ReplayResult {
 	res := ReplayResult{
@@ -35,15 +35,6 @@ func Replay(
 	prevHash := GenesisHash
 
 	for i, e := range entries {
-		if i == 0 {
-			expected, err := attestChained(e, prevHash)
-			if err != nil || expected != e.Attestation {
-				prevHash = e.Attestation
-				continue
-			}
-			prevHash = e.Attestation
-			continue
-		}
 		expected, err := attestChained(e, prevHash)
 		if err != nil || expected != e.Attestation {
 			res.ChainStatus = "broken"

@@ -22,12 +22,13 @@ type AsyncLedger struct {
 	lastHash  string
 	logger    *log.Logger
 	clock     func() time.Time
+	lifecycle sync.RWMutex
 
 	// Async components
 	queue      chan models.AuditEntry
 	bufferCap  int
 	flushEvery time.Duration
-	fallbacks  int64 // atomic counter: times circuit breaker triggered
+	fallbacks  int64 // atomic counter: times queue backpressure was applied
 
 	// Lifecycle
 	closed int32 // atomic flag: 1 = closed
@@ -80,8 +81,11 @@ func NewAsyncLedger(writer io.Writer, cfg AsyncConfig) *AsyncLedger {
 
 // Record queues an audit entry for async persistence.
 // The entry's timestamp is set synchronously (contemporaneous).
-// If the buffer is full, falls back to synchronous write (circuit breaker).
+// If the buffer is full, it applies backpressure to preserve chain order.
 func (al *AsyncLedger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
+	al.lifecycle.RLock()
+	defer al.lifecycle.RUnlock()
+
 	if atomic.LoadInt32(&al.closed) == 1 {
 		return models.AuditEntry{}, errors.New("record audit entry: ledger is closed")
 	}
@@ -103,20 +107,7 @@ func (al *AsyncLedger) Record(entry models.AuditEntry) (models.AuditEntry, error
 		entry.Timestamp = al.clock()
 	}
 
-	// Try async queue
-	select {
-	case al.queue <- entry:
-		// Queued successfully — will be chained and persisted by background worker
-		return entry, nil
-	default:
-		// Circuit breaker: buffer full, fall back to synchronous Mode A
-		atomic.AddInt64(&al.fallbacks, 1)
-		return al.recordSync(entry)
-	}
-}
-
-// recordSync is the Mode A fallback when the async buffer is full.
-func (al *AsyncLedger) recordSync(entry models.AuditEntry) (models.AuditEntry, error) {
+	// Compute and append the chain synchronously. Only persistence is async.
 	al.mu.Lock()
 	attestation, err := attestChained(entry, al.lastHash)
 	if err != nil {
@@ -126,14 +117,27 @@ func (al *AsyncLedger) recordSync(entry models.AuditEntry) (models.AuditEntry, e
 	entry.Attestation = attestation
 	al.lastHash = attestation
 	al.entries = append(al.entries, entry)
-	al.mu.Unlock()
 
-	payload, _ := json.Marshal(entry)
-	al.logger.Print(string(payload))
+	// Enqueue while still holding the sequencing lock so persistence order
+	// always matches hash-chain order.
+	select {
+	case al.queue <- entry:
+		al.mu.Unlock()
+	default:
+		// A full queue must not let a later entry overtake this one.
+		atomic.AddInt64(&al.fallbacks, 1)
+		al.queue <- entry
+		al.mu.Unlock()
+	}
 	return entry, nil
 }
 
-// backgroundWriter drains the queue, computes hash chains, and writes entries.
+func (al *AsyncLedger) persist(entry models.AuditEntry) {
+	payload, _ := json.Marshal(entry)
+	al.logger.Print(string(payload))
+}
+
+// backgroundWriter drains the queue and persists already-chained entries.
 func (al *AsyncLedger) backgroundWriter() {
 	defer al.wg.Done()
 
@@ -193,24 +197,10 @@ func (al *AsyncLedger) drainQueue(queue <-chan models.AuditEntry, batch *[]model
 	}
 }
 
-// flushBatch chains and persists a batch of entries.
+// flushBatch persists a batch of entries.
 func (al *AsyncLedger) flushBatch(batch []models.AuditEntry) {
-	al.mu.Lock()
-	for i := range batch {
-		attestation, err := attestChained(batch[i], al.lastHash)
-		if err != nil {
-			continue
-		}
-		batch[i].Attestation = attestation
-		al.lastHash = attestation
-		al.entries = append(al.entries, batch[i])
-	}
-	al.mu.Unlock()
-
-	// Write to log output (simulates DB write)
 	for _, entry := range batch {
-		payload, _ := json.Marshal(entry)
-		al.logger.Print(string(payload))
+		al.persist(entry)
 	}
 }
 
@@ -223,7 +213,7 @@ func (al *AsyncLedger) Entries() []models.AuditEntry {
 	return out
 }
 
-// Fallbacks returns the number of times the circuit breaker triggered.
+// Fallbacks returns the number of times queue backpressure was applied.
 func (al *AsyncLedger) Fallbacks() int64 {
 	return atomic.LoadInt64(&al.fallbacks)
 }
@@ -235,8 +225,10 @@ func (al *AsyncLedger) Pending() int {
 
 // Close drains the queue and stops the background writer.
 func (al *AsyncLedger) Close() {
+	al.lifecycle.Lock()
 	atomic.StoreInt32(&al.closed, 1)
 	close(al.done)
+	al.lifecycle.Unlock()
 	al.wg.Wait()
 }
 

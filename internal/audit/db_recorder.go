@@ -141,6 +141,7 @@ type AsyncDBLedger struct {
 	done      chan struct{}
 	wg        sync.WaitGroup
 	fallbacks int64
+	lifecycle sync.RWMutex
 }
 
 // NewAsyncDBLedger creates a Mode B ledger with async Postgres persistence.
@@ -175,6 +176,9 @@ func NewAsyncDBLedger(dbDSN string, logWriter io.Writer, bufferSize int) (*Async
 }
 
 func (al *AsyncDBLedger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
+	al.lifecycle.RLock()
+	defer al.lifecycle.RUnlock()
+
 	if atomic.LoadInt32(&al.closed) == 1 {
 		return models.AuditEntry{}, errors.New("record audit entry: ledger is closed")
 	}
@@ -194,16 +198,7 @@ func (al *AsyncDBLedger) Record(entry models.AuditEntry) (models.AuditEntry, err
 		entry.Timestamp = al.clock()
 	}
 
-	select {
-	case al.queue <- entry:
-		return entry, nil
-	default:
-		atomic.AddInt64(&al.fallbacks, 1)
-		return al.syncWrite(entry)
-	}
-}
-
-func (al *AsyncDBLedger) syncWrite(entry models.AuditEntry) (models.AuditEntry, error) {
+	// Compute and append the chain synchronously. Only the DB write is async.
 	al.mu.Lock()
 	attestation, err := attestChained(entry, al.lastHash)
 	if err != nil {
@@ -211,19 +206,19 @@ func (al *AsyncDBLedger) syncWrite(entry models.AuditEntry) (models.AuditEntry, 
 		return models.AuditEntry{}, err
 	}
 	entry.Attestation = attestation
-	detailsJSON, _ := json.Marshal(entry.Details)
-	_, err = al.db.Exec(`INSERT INTO audit_ledger
-		(id, timestamp, agent_id, intent_fingerprint, action, component, status, details, attestation)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		entry.ID, entry.Timestamp, entry.AgentID, entry.IntentFingerprint,
-		entry.Action, entry.Component, entry.Status, detailsJSON, entry.Attestation)
-	if err != nil {
-		al.mu.Unlock()
-		return models.AuditEntry{}, err
-	}
 	al.lastHash = attestation
 	al.entries = append(al.entries, entry)
-	al.mu.Unlock()
+
+	// Keep sequencing locked through enqueue so DB persistence order matches
+	// the attestation chain order.
+	select {
+	case al.queue <- entry:
+		al.mu.Unlock()
+	default:
+		atomic.AddInt64(&al.fallbacks, 1)
+		al.queue <- entry
+		al.mu.Unlock()
+	}
 	return entry, nil
 }
 
@@ -280,10 +275,9 @@ func (al *AsyncDBLedger) worker() {
 }
 
 func (al *AsyncDBLedger) flushToDB(batch []models.AuditEntry) {
-	al.mu.Lock()
 	tx, err := al.db.Begin()
 	if err != nil {
-		al.mu.Unlock()
+		al.logger.Printf("async audit begin transaction: %v", err)
 		return
 	}
 	stmt, err := tx.Prepare(`INSERT INTO audit_ledger
@@ -291,28 +285,31 @@ func (al *AsyncDBLedger) flushToDB(batch []models.AuditEntry) {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`)
 	if err != nil {
 		tx.Rollback()
-		al.mu.Unlock()
+		al.logger.Printf("async audit prepare: %v", err)
 		return
 	}
 
-	for i := range batch {
-		attestation, err := attestChained(batch[i], al.lastHash)
-		if err != nil {
-			continue
+	for _, entry := range batch {
+		detailsJSON, _ := json.Marshal(entry.Details)
+		if _, err := stmt.Exec(
+			entry.ID, entry.Timestamp, entry.AgentID, entry.IntentFingerprint,
+			entry.Action, entry.Component, entry.Status, detailsJSON, entry.Attestation,
+		); err != nil {
+			al.logger.Printf("async audit insert %s: %v", entry.ID, err)
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return
 		}
-		batch[i].Attestation = attestation
-		al.lastHash = attestation
-		al.entries = append(al.entries, batch[i])
-
-		detailsJSON, _ := json.Marshal(batch[i].Details)
-		stmt.Exec(
-			batch[i].ID, batch[i].Timestamp, batch[i].AgentID, batch[i].IntentFingerprint,
-			batch[i].Action, batch[i].Component, batch[i].Status, detailsJSON, batch[i].Attestation)
 	}
 
-	stmt.Close()
-	tx.Commit()
-	al.mu.Unlock()
+	if err := stmt.Close(); err != nil {
+		_ = tx.Rollback()
+		al.logger.Printf("async audit close statement: %v", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		al.logger.Printf("async audit commit: %v", err)
+	}
 }
 
 func (al *AsyncDBLedger) Entries() []models.AuditEntry {
@@ -339,8 +336,10 @@ func (al *AsyncDBLedger) VerifyChain() int {
 
 func (al *AsyncDBLedger) Fallbacks() int64 { return atomic.LoadInt64(&al.fallbacks) }
 func (al *AsyncDBLedger) Close() {
+	al.lifecycle.Lock()
 	atomic.StoreInt32(&al.closed, 1)
 	close(al.done)
+	al.lifecycle.Unlock()
 	al.wg.Wait()
 	al.db.Close()
 }

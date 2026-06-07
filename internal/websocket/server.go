@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,9 +17,26 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
+	CheckOrigin: checkOrigin,
+}
+
+func checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
 		return true
-	},
+	}
+
+	if configured := os.Getenv("VAOS_WS_ALLOWED_ORIGINS"); configured != "" {
+		for _, allowed := range strings.Split(configured, ",") {
+			if strings.TrimSpace(allowed) == origin {
+				return true
+			}
+		}
+		return false
+	}
+
+	parsed, err := url.Parse(origin)
+	return err == nil && strings.EqualFold(parsed.Host, r.Host)
 }
 
 type Server struct {
@@ -28,8 +48,8 @@ type Server struct {
 type Client struct {
 	ID   string
 	Conn *websocket.Conn
-	Send  chan []byte
-	mu    sync.Mutex
+	Send chan []byte
+	mu   sync.Mutex
 }
 
 func NewServer(registry *nhi.Registry) *Server {
@@ -55,7 +75,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	client := &Client{
 		ID:   clientID,
 		Conn: conn,
-		Send:  make(chan []byte, 256),
+		Send: make(chan []byte, 256),
 	}
 
 	s.mu.Lock()
@@ -69,7 +89,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	welcome := map[string]interface{}{
 		"type": "connection",
 		"payload": map[string]interface{}{
-			"status":   "connected",
+			"status":    "connected",
 			"client_id": clientID,
 		},
 	}
@@ -185,18 +205,18 @@ func (s *Server) handleGetAgent(client *Client, msg map[string]interface{}) {
 	}
 
 	agentInfo := map[string]interface{}{
-		"id":              agent.ID,
-		"name":            agent.Name,
-		"roles":           agent.Roles,
+		"id":               agent.ID,
+		"name":             agent.Name,
+		"roles":            agent.Roles,
 		"capabilities":     agent.Capabilities,
 		"reputation_score": agent.ReputationScore,
-		"metadata":        agent.Metadata,
+		"metadata":         agent.Metadata,
 	}
 
 	s.sendMessage(client, map[string]interface{}{
 		"type": "agent_state",
 		"payload": map[string]interface{}{
-			"agent_id": agentID,
+			"agent_id":   agentID,
 			"agent_info": agentInfo,
 		},
 	})
@@ -208,14 +228,14 @@ func (s *Server) handleListAgents(client *Client) {
 	agentInfos := make([]map[string]interface{}, len(agents))
 	for i, agent := range agents {
 		agentInfos[i] = map[string]interface{}{
-			"id":              agent.ID,
-			"name":            agent.Name,
-			"persona":         agent.Persona,
-			"state":           int(agent.State),
-			"roles":           agent.Roles,
+			"id":               agent.ID,
+			"name":             agent.Name,
+			"persona":          agent.Persona,
+			"state":            int(agent.State),
+			"roles":            agent.Roles,
 			"capabilities":     agent.Capabilities,
 			"reputation_score": agent.ReputationScore,
-			"metadata":        agent.Metadata,
+			"metadata":         agent.Metadata,
 		}
 	}
 
@@ -244,9 +264,9 @@ func (s *Server) handleSendCommand(client *Client, msg map[string]interface{}) {
 	s.sendMessage(client, map[string]interface{}{
 		"type": "command_response",
 		"payload": map[string]interface{}{
-			"success":  true,
-			"agent_id":  agentID,
-			"command":   command,
+			"success":    true,
+			"agent_id":   agentID,
+			"command":    command,
 			"parameters": params,
 		},
 	})
@@ -357,20 +377,20 @@ func (s *Server) handleAgentStateChange(agentID string, oldState, newState model
 	defer s.mu.RUnlock()
 
 	agentInfo := map[string]interface{}{
-		"id":              agent.ID,
-		"name":            agent.Name,
-		"persona":         agent.Persona,
-		"state":           int(agent.State),
-		"roles":           agent.Roles,
+		"id":               agent.ID,
+		"name":             agent.Name,
+		"persona":          agent.Persona,
+		"state":            int(agent.State),
+		"roles":            agent.Roles,
 		"capabilities":     agent.Capabilities,
 		"reputation_score": agent.ReputationScore,
-		"metadata":        agent.Metadata,
-		"last_active":     agent.LastActive.Unix(),
+		"metadata":         agent.Metadata,
+		"last_active":      agent.LastActive.Unix(),
 	}
 
 	for _, client := range s.clients {
 		s.sendMessage(client, map[string]interface{}{
-			"type": "state_update",
+			"type":    "state_update",
 			"payload": agentInfo,
 		})
 	}

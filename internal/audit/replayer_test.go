@@ -67,6 +67,19 @@ func TestReplayChainTampered(t *testing.T) {
 	}
 }
 
+func TestReplayFirstEntryTampered(t *testing.T) {
+	_, entries := buildChain(t, 1)
+	entries[0].Attestation = "deadbeef"
+
+	res := Replay(entries, nil, nil)
+	if res.ChainStatus != "broken" {
+		t.Fatalf("expected chain broken, got %s", res.ChainStatus)
+	}
+	if res.BrokenAtIndex != 0 {
+		t.Fatalf("expected broken at 0, got %d", res.BrokenAtIndex)
+	}
+}
+
 func TestReplayWithValidSigs(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	_, entries := buildChain(t, 3)

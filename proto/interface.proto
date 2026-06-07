@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package vaos.kernel.interface.v1;
 
-option go_package = "vaos-kernel/internal/grpc/gen/interfacev1";
+option go_package = "vaos-kernel/internal/grpc/gen/interfacev1;interfacev1";
 
 message InterfaceDispatchRequest {
   string agent_id = 1;
@@ -21,4 +21,3 @@ message InterfaceDispatchResponse {
 service InterfaceService {
   rpc Dispatch(InterfaceDispatchRequest) returns (InterfaceDispatchResponse);
 }
-

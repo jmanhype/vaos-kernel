@@ -7,7 +7,10 @@ build:
 	$(GO) build ./...
 
 proto:
-	protoc --proto_path=$(PROTO_DIR) --go_out=. --go-grpc_out=. $(PROTO_DIR)/*.proto
+	protoc --proto_path=. \
+		--go_out=. --go_opt=module=vaos-kernel \
+		--go-grpc_out=. --go-grpc_opt=module=vaos-kernel \
+		$(PROTO_DIR)/*.proto
 
 test:
 	$(GO) test ./...
