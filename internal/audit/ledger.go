@@ -18,9 +18,9 @@ import (
 const GenesisHash = "vaos-kernel-genesis-0000000000000000000000000000000000000000000000"
 
 var (
-	errMissingAgentID  = errors.New("record audit entry: agent id is required")
+	errMissingAgentID   = errors.New("record audit entry: agent id is required")
 	errMissingComponent = errors.New("record audit entry: component is required")
-	errMissingAction   = errors.New("record audit entry: action is required")
+	errMissingAction    = errors.New("record audit entry: action is required")
 )
 
 const defaultMaxEntries = 100000
@@ -29,6 +29,7 @@ const defaultMaxEntries = 100000
 type Ledger struct {
 	mu         sync.RWMutex
 	entries    []models.AuditEntry
+	anchorHash string
 	lastHash   string
 	logger     *log.Logger
 	clock      func() time.Time
@@ -41,6 +42,7 @@ func NewLedger(writer io.Writer) *Ledger {
 		writer = io.Discard
 	}
 	return &Ledger{
+		anchorHash: GenesisHash,
 		lastHash:   GenesisHash,
 		logger:     log.New(writer, "", 0),
 		clock:      func() time.Time { return time.Now().UTC() },
@@ -83,6 +85,7 @@ func (l *Ledger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
 	// Evict oldest half when capacity exceeded
 	if l.maxEntries > 0 && len(l.entries) > l.maxEntries {
 		half := len(l.entries) / 2
+		l.anchorHash = l.entries[half-1].Attestation
 		l.entries = l.entries[half:]
 	}
 	l.mu.Unlock()
@@ -94,34 +97,42 @@ func (l *Ledger) Record(entry models.AuditEntry) (models.AuditEntry, error) {
 
 // VerifyChain walks all entries and verifies the hash chain integrity.
 // Returns the index of the first broken link, or -1 if the chain is valid.
-// After eviction, the chain may be partial — the first entry is always
-// trusted as the new anchor since its predecessor was evicted.
+// After eviction, verification starts from the retained predecessor hash.
 func (l *Ledger) VerifyChain() int {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	if len(l.entries) == 0 {
-		return -1
-	}
-
-	// Start from the second entry; the first entry is the anchor after eviction.
-	for i := 1; i < len(l.entries); i++ {
-		prevHash := l.entries[i-1].Attestation
-		expected, err := attestChained(l.entries[i], prevHash)
+	prevHash := l.anchorHash
+	for i, entry := range l.entries {
+		expected, err := attestChained(entry, prevHash)
 		if err != nil || expected != l.entries[i].Attestation {
 			return i
 		}
+		prevHash = entry.Attestation
 	}
 	return -1
 }
 
 // Entries returns a copy of all ledger entries.
 func (l *Ledger) Entries() []models.AuditEntry {
+	entries, _ := l.Snapshot()
+	return entries
+}
+
+// Snapshot atomically returns the retained entries and their predecessor hash.
+func (l *Ledger) Snapshot() ([]models.AuditEntry, string) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	out := make([]models.AuditEntry, len(l.entries))
 	copy(out, l.entries)
-	return out
+	return out, l.anchorHash
+}
+
+// AnchorHash returns the predecessor hash for the first retained entry.
+func (l *Ledger) AnchorHash() string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.anchorHash
 }
 
 func attestChained(entry models.AuditEntry, prevHash string) (string, error) {
@@ -152,4 +163,3 @@ func attestChained(entry models.AuditEntry, prevHash string) (string, error) {
 	sum := blake2b.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }
-

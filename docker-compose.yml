@@ -6,6 +6,10 @@ services:
       - "${VAOS_GRPC_PORT:-50051}:50051"
     environment:
       - VAOS_KERNEL_MODE=sync
+      - AMQP_URL=amqp://${VAOS_RABBITMQ_USER:-vaos}:${VAOS_RABBITMQ_PASSWORD:-vaos}@rabbitmq:5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 10s
@@ -19,8 +23,35 @@ services:
     environment:
       - VAOS_KERNEL_MODE=db-sync
       - VAOS_DB_DSN=host=postgres user=vaos password=vaos dbname=vaos_kernel sslmode=disable
+      - VAOS_DB_HOST=postgres
+      - VAOS_DB_USER=vaos
+      - VAOS_DB_PASSWORD=vaos
+      - VAOS_DB_NAME=vaos_kernel
+      - AMQP_URL=amqp://${VAOS_RABBITMQ_USER:-vaos}:${VAOS_RABBITMQ_PASSWORD:-vaos}@rabbitmq:5672
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  kernel-db-async:
+    profiles: ["db-async"]
+    build: .
+    ports:
+      - "${VAOS_ASYNC_DB_HTTP_PORT:-8082}:8080"
+      - "${VAOS_ASYNC_DB_GRPC_PORT:-50053}:50051"
+    environment:
+      - VAOS_KERNEL_MODE=db-async
+      - VAOS_DB_DSN=host=postgres user=vaos password=vaos dbname=vaos_kernel sslmode=disable
+      - VAOS_DB_HOST=postgres
+      - VAOS_DB_USER=vaos
+      - VAOS_DB_PASSWORD=vaos
+      - VAOS_DB_NAME=vaos_kernel
+      - AMQP_URL=amqp://${VAOS_RABBITMQ_USER:-vaos}:${VAOS_RABBITMQ_PASSWORD:-vaos}@rabbitmq:5672
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   postgres:
@@ -39,5 +70,20 @@ services:
       interval: 5s
       retries: 5
 
+  rabbitmq:
+    image: rabbitmq:3-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${VAOS_RABBITMQ_USER:-vaos}
+      RABBITMQ_DEFAULT_PASS: ${VAOS_RABBITMQ_PASSWORD:-vaos}
+    ports:
+      - "${VAOS_AMQP_PORT:-5672}:5672"
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      retries: 10
+
 volumes:
   pgdata:
+  rabbitdata:

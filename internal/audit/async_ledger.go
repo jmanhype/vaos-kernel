@@ -17,12 +17,14 @@ import (
 // (preserving cryptographic binding), but the chained ledger write is deferred
 // to a background worker. The 60-second JWT TTL provides the consistency window.
 type AsyncLedger struct {
-	mu        sync.RWMutex
-	entries   []models.AuditEntry
-	lastHash  string
-	logger    *log.Logger
-	clock     func() time.Time
-	lifecycle sync.RWMutex
+	mu         sync.RWMutex
+	entries    []models.AuditEntry
+	anchorHash string
+	lastHash   string
+	logger     *log.Logger
+	clock      func() time.Time
+	maxEntries int
+	lifecycle  sync.RWMutex
 
 	// Async components
 	queue      chan models.AuditEntry
@@ -63,9 +65,11 @@ func NewAsyncLedger(writer io.Writer, cfg AsyncConfig) *AsyncLedger {
 	}
 
 	al := &AsyncLedger{
+		anchorHash: GenesisHash,
 		lastHash:   GenesisHash,
 		logger:     log.New(writer, "", 0),
 		clock:      func() time.Time { return time.Now().UTC() },
+		maxEntries: defaultMaxEntries,
 		queue:      make(chan models.AuditEntry, cfg.BufferSize),
 		bufferCap:  cfg.BufferSize,
 		flushEvery: cfg.FlushInterval,
@@ -117,6 +121,11 @@ func (al *AsyncLedger) Record(entry models.AuditEntry) (models.AuditEntry, error
 	entry.Attestation = attestation
 	al.lastHash = attestation
 	al.entries = append(al.entries, entry)
+	if al.maxEntries > 0 && len(al.entries) > al.maxEntries {
+		half := len(al.entries) / 2
+		al.anchorHash = al.entries[half-1].Attestation
+		al.entries = al.entries[half:]
+	}
 
 	// Enqueue while still holding the sequencing lock so persistence order
 	// always matches hash-chain order.
@@ -206,11 +215,24 @@ func (al *AsyncLedger) flushBatch(batch []models.AuditEntry) {
 
 // Entries returns a copy of all persisted ledger entries.
 func (al *AsyncLedger) Entries() []models.AuditEntry {
+	entries, _ := al.Snapshot()
+	return entries
+}
+
+// Snapshot atomically returns the retained entries and their predecessor hash.
+func (al *AsyncLedger) Snapshot() ([]models.AuditEntry, string) {
 	al.mu.RLock()
 	defer al.mu.RUnlock()
 	out := make([]models.AuditEntry, len(al.entries))
 	copy(out, al.entries)
-	return out
+	return out, al.anchorHash
+}
+
+// AnchorHash returns the predecessor hash for the first retained entry.
+func (al *AsyncLedger) AnchorHash() string {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	return al.anchorHash
 }
 
 // Fallbacks returns the number of times queue backpressure was applied.
@@ -237,7 +259,7 @@ func (al *AsyncLedger) VerifyChain() int {
 	al.mu.RLock()
 	defer al.mu.RUnlock()
 
-	prevHash := GenesisHash
+	prevHash := al.anchorHash
 	for i, entry := range al.entries {
 		expected, err := attestChained(entry, prevHash)
 		if err != nil || expected != entry.Attestation {

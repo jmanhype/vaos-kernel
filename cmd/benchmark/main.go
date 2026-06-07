@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/rand"
 	"net/http"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -16,6 +18,7 @@ import (
 )
 
 var modeName string
+var apiSecret string
 
 // Shared HTTP client with proper connection pooling
 var httpClient = &http.Client{
@@ -56,6 +59,16 @@ type stats struct {
 	rps         float64
 }
 
+type outputStats struct {
+	Concurrency int     `json:"concurrency"`
+	RPS         float64 `json:"rps"`
+	P50MS       float64 `json:"p50_ms"`
+	P95MS       float64 `json:"p95_ms"`
+	P99MS       float64 `json:"p99_ms"`
+	Total       int64   `json:"total"`
+	Success     int64   `json:"success"`
+}
+
 func main() {
 	baseURL := os.Getenv("KERNEL_URL")
 	if baseURL == "" {
@@ -70,6 +83,7 @@ func main() {
 	if modeName == "" {
 		modeName = "sync"
 	}
+	apiSecret = os.Getenv("KERNEL_API_SECRET")
 
 	fmt.Println("vaos-kernel benchmark")
 	fmt.Printf("Target: %s/api/token\n", baseURL)
@@ -119,7 +133,10 @@ func main() {
 
 	// Output CSV
 	csvPath := fmt.Sprintf("benchmark_%s.csv", modeName)
-	f, _ := os.Create(csvPath)
+	f, err := os.Create(csvPath)
+	if err != nil {
+		log.Fatalf("create CSV output: %v", err)
+	}
 	defer f.Close()
 	fmt.Fprintln(f, "concurrency,rps,p50_ms,p95_ms,p99_ms,total,success")
 	for _, s := range allStats {
@@ -134,24 +151,39 @@ func main() {
 
 	// Output JSON for paper pipeline
 	jsonPath := fmt.Sprintf("benchmark_%s.json", modeName)
-	jf, _ := os.Create(jsonPath)
+	jf, err := os.Create(jsonPath)
+	if err != nil {
+		log.Fatalf("create JSON output: %v", err)
+	}
 	defer jf.Close()
-	json.NewEncoder(jf).Encode(map[string]interface{}{
+	outputResults := make([]outputStats, len(allStats))
+	for i, s := range allStats {
+		outputResults[i] = outputStats{
+			Concurrency: s.concurrency,
+			RPS:         s.rps,
+			P50MS:       float64(s.p50.Microseconds()) / 1000,
+			P95MS:       float64(s.p95.Microseconds()) / 1000,
+			P99MS:       float64(s.p99.Microseconds()) / 1000,
+			Total:       s.totalReqs,
+			Success:     s.successReqs,
+		}
+	}
+	if err := json.NewEncoder(jf).Encode(map[string]interface{}{
 		"hardware": map[string]string{
-			"machine":  "Apple Mac Mini M4",
-			"cpu":      "10-core",
-			"ram":      "16GB",
-			"storage":  "512GB NVMe SSD",
-			"go":       "1.26.1",
-			"postgres": "local",
+			"platform": runtime.GOOS + "/" + runtime.GOARCH,
+			"go":       runtime.Version(),
 		},
 		"config": map[string]interface{}{
+			"target":         baseURL,
+			"concurrency":    concurrencyLevels,
 			"duration_sec":   testDuration.Seconds(),
 			"runs_per_level": runsPerLevel,
 			"mode":           modeName,
 		},
-		"results": allStats,
-	})
+		"results": outputResults,
+	}); err != nil {
+		log.Fatalf("write JSON output: %v", err)
+	}
 	fmt.Printf("JSON saved to %s\n", jsonPath)
 }
 
@@ -257,7 +289,15 @@ func sendRequest(baseURL string, nonce int) bool {
 	}
 
 	body, _ := json.Marshal(req)
-	resp, err := httpClient.Post(baseURL+"/api/token", "application/json", bytes.NewReader(body))
+	httpReq, err := http.NewRequest(http.MethodPost, baseURL+"/api/token", bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if apiSecret != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiSecret)
+	}
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return false
 	}

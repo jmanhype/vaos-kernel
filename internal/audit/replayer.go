@@ -5,6 +5,7 @@ import "vaos-kernel/pkg/models"
 // ReplayResult summarises a full-chain replay verification.
 type ReplayResult struct {
 	EntryCount       int    `json:"entry_count"`
+	AnchorHash       string `json:"anchor_hash"`
 	ChainStatus      string `json:"chain_status"`
 	BrokenAtIndex    int    `json:"broken_at_index"`
 	SigStatus        string `json:"sig_status"`
@@ -21,8 +22,22 @@ func Replay(
 	sigFn func(models.AuditEntry) string,
 	verifyFn func(data []byte, sigHex string) bool,
 ) ReplayResult {
+	return ReplayFrom(entries, GenesisHash, sigFn, verifyFn)
+}
+
+// ReplayFrom verifies a retained chain segment from its predecessor hash.
+func ReplayFrom(
+	entries []models.AuditEntry,
+	anchorHash string,
+	sigFn func(models.AuditEntry) string,
+	verifyFn func(data []byte, sigHex string) bool,
+) ReplayResult {
+	if anchorHash == "" {
+		anchorHash = GenesisHash
+	}
 	res := ReplayResult{
 		EntryCount:    len(entries),
+		AnchorHash:    anchorHash,
 		ChainStatus:   "ok",
 		BrokenAtIndex: -1,
 		SigStatus:     "skipped",
@@ -32,7 +47,7 @@ func Replay(
 		return res
 	}
 
-	prevHash := GenesisHash
+	prevHash := anchorHash
 
 	for i, e := range entries {
 		expected, err := attestChained(e, prevHash)

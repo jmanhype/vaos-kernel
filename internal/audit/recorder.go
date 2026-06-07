@@ -6,5 +6,7 @@ import "vaos-kernel/pkg/models"
 type Recorder interface {
 	Record(entry models.AuditEntry) (models.AuditEntry, error)
 	Entries() []models.AuditEntry
+	AnchorHash() string
+	Snapshot() ([]models.AuditEntry, string)
 	VerifyChain() int
 }

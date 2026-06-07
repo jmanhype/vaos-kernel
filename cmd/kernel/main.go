@@ -195,10 +195,17 @@ func main() {
 		}
 	}
 	// Set up audit writer — stdout + Postgres if available
-	var auditWriter io.Writer = os.Stdout
+	var auditWriter io.Writer = io.Discard
+	if !strings.EqualFold(os.Getenv("VAOS_AUDIT_STDOUT"), "false") {
+		auditWriter = os.Stdout
+	}
 	if useDB {
 		dbWriter := audit.NewDBWriter(database)
-		auditWriter = io.MultiWriter(os.Stdout, dbWriter)
+		if auditWriter == io.Discard {
+			auditWriter = dbWriter
+		} else {
+			auditWriter = io.MultiWriter(auditWriter, dbWriter)
+		}
 		log.Printf("Postgres connected — %d agents in DB, audit logging to DB", len(registryDB.ListAll()))
 		_ = registryDB
 	}
@@ -495,7 +502,7 @@ func main() {
 		page := parseIntParam(q.Get("page"), 1)
 		perPage := clamp(parseIntParam(q.Get("per_page"), 20), 1, 100)
 
-		all := ledger.Entries()
+		all, anchorHash := ledger.Snapshot()
 		filtered := filterEntries(all, q.Get("agent_id"), q.Get("action"), q.Get("status"), q.Get("component"))
 
 		total := len(filtered)
@@ -525,11 +532,12 @@ func main() {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"entries":  out,
-			"total":    total,
-			"page":     page,
-			"per_page": perPage,
-			"pages":    pages,
+			"entries":     out,
+			"anchor_hash": anchorHash,
+			"total":       total,
+			"page":        page,
+			"per_page":    perPage,
+			"pages":       pages,
 		})
 	}))
 	// Audit chain + signature replay verification — no auth (public verifiability)
@@ -538,10 +546,10 @@ func main() {
 			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		entries := ledger.Entries()
+		entries, anchorHash := ledger.Snapshot()
 		sigFn := func(e models.AuditEntry) string { return sigs.Get(e.ID) }
 		verifyFn := func(data []byte, sigHex string) bool { return signer.Verify(data, sigHex) }
-		result := audit.Replay(entries, sigFn, verifyFn)
+		result := audit.ReplayFrom(entries, anchorHash, sigFn, verifyFn)
 
 		writeJSON(w, http.StatusOK, result)
 	})
@@ -585,8 +593,28 @@ func main() {
 		// Forward to all WebSocket clients as telemetry/threat events
 		wsServer.BroadcastEvent(exchange, routingKey, event)
 	})
-	if err := consumer.Start([]string{"miosa.events", "miosa.tasks"}); err != nil {
-		log.Printf("WARNING: AMQP consumer failed to start: %v (telemetry forwarding disabled)", err)
+	amqpExchanges := []string{"miosa.events", "miosa.tasks"}
+	if err := consumer.Start(amqpExchanges); err != nil {
+		log.Printf("WARNING: AMQP consumer failed to start: %v (retrying every 5s)", err)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := consumer.Start(amqpExchanges); err != nil {
+						log.Printf("WARNING: AMQP consumer retry failed: %v", err)
+						continue
+					}
+					log.Printf("AMQP consumer connected after retry — forwarding miosa.events + miosa.tasks to WebSocket")
+					return
+				}
+			}
+		}()
 	} else {
 		log.Printf("AMQP consumer connected — forwarding miosa.events + miosa.tasks to WebSocket")
 	}

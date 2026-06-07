@@ -93,3 +93,56 @@ func TestAsyncLedgerPersistsInChainOrder(t *testing.T) {
 		t.Fatalf("persisted chain order is broken at %d", result.BrokenAtIndex)
 	}
 }
+
+func TestLedgerEvictionRetainsVerifiableAnchor(t *testing.T) {
+	ledger := NewLedger(&bytes.Buffer{})
+	ledger.maxEntries = 4
+
+	for i := 0; i < 5; i++ {
+		if _, err := ledger.Record(models.AuditEntry{
+			AgentID:   "agent-1",
+			Action:    "deploy",
+			Component: "swarm",
+			Status:    "success",
+		}); err != nil {
+			t.Fatalf("record entry %d: %v", i, err)
+		}
+	}
+
+	if ledger.AnchorHash() == GenesisHash {
+		t.Fatal("expected eviction to advance the anchor")
+	}
+	entries := ledger.Entries()
+	if got := ReplayFrom(entries, ledger.AnchorHash(), nil, nil); got.ChainStatus != "ok" {
+		t.Fatalf("retained chain is broken at %d", got.BrokenAtIndex)
+	}
+
+	entries[0].Status = "tampered"
+	if got := ReplayFrom(entries, ledger.AnchorHash(), nil, nil); got.BrokenAtIndex != 0 {
+		t.Fatalf("expected first retained entry tampering at 0, got %d", got.BrokenAtIndex)
+	}
+}
+
+func TestAsyncLedgerEvictionRetainsVerifiableAnchor(t *testing.T) {
+	ledger := NewAsyncLedger(&bytes.Buffer{}, AsyncConfig{BufferSize: 8})
+	ledger.maxEntries = 4
+	defer ledger.Close()
+
+	for i := 0; i < 5; i++ {
+		if _, err := ledger.Record(models.AuditEntry{
+			AgentID:   "agent-1",
+			Action:    "deploy",
+			Component: "swarm",
+			Status:    "success",
+		}); err != nil {
+			t.Fatalf("record entry %d: %v", i, err)
+		}
+	}
+
+	if ledger.AnchorHash() == GenesisHash {
+		t.Fatal("expected eviction to advance the async anchor")
+	}
+	if got := ReplayFrom(ledger.Entries(), ledger.AnchorHash(), nil, nil); got.ChainStatus != "ok" {
+		t.Fatalf("retained async chain is broken at %d", got.BrokenAtIndex)
+	}
+}
