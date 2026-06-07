@@ -51,6 +51,17 @@ Sync ALCOA+ attestation (BLAKE2b fingerprint + JWT signing + hash chain append) 
 
 Tests: `internal/audit/ledger_test.go`, `internal/grpc/server_test.go`, `internal/hash/hasher_test.go`, `internal/jwt/issuer_test.go`, `internal/nhi/registry_test.go`.
 
+## References
+
+See [`docs/BIBLIOGRAPHY.md`](docs/BIBLIOGRAPHY.md) for the protocol
+specifications and research papers that inform this project's design,
+including:
+
+- [IETF draft-goswami-agentic-jwt-00](https://datatracker.ietf.org/doc/draft-goswami-agentic-jwt/) — Agentic JWT protocol
+- Signal Theory optimal systems classification
+- Fault-tolerant VAOS control plane architecture
+- Execution complexity signatures for agent scoring
+
 ## Comparison
 
 | | vaos-kernel | HashiCorp Vault | SPIFFE/SPIRE | OPA |
