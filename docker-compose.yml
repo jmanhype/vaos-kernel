@@ -42,10 +42,12 @@ services:
       - "${VAOS_ASYNC_DB_GRPC_PORT:-50053}:50051"
     environment:
       - VAOS_KERNEL_MODE=db-async
+      - VAOS_JWT_SECRET=${VAOS_JWT_SECRET:-demo-jwt-secret-key-at-least-32-bytes-long}
+      - VAOS_API_SECRET=${VAOS_API_SECRET:-demo-api-secret}
       - VAOS_DB_DSN=host=postgres user=vaos password=vaos dbname=vaos_kernel sslmode=disable
       - VAOS_DB_HOST=postgres
       - VAOS_DB_USER=vaos
-      - VAOS_DB_PASSWORD=vaos
+      - VAOS_DB_PASSWORD=***
       - VAOS_DB_NAME=vaos_kernel
       - AMQP_URL=amqp://${VAOS_RABBITMQ_USER:-vaos}:${VAOS_RABBITMQ_PASSWORD:-vaos}@rabbitmq:5672
     depends_on:
