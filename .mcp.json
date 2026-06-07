@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "vaos-kernel": {
+      "command": "./bin/vaos-mcp",
+      "args": [],
+      "env": {
+        "VAOS_JWT_SECRET": "demo-jwt-secret-key-at-least-32-bytes-long"
+      }
+    }
+  }
+}
