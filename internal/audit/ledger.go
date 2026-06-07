@@ -50,6 +50,11 @@ func NewLedger(writer io.Writer) *Ledger {
 	}
 }
 
+// [DEMO-BOOKMARK-3] AUDIT LOG ENTRY — hash-chained, tamper-proof
+// Every call to Record() appends to the chain:
+//   H_n = BLAKE2b(canonical_fields_n || H_{n-1})
+// Modifying ANY historical entry breaks all subsequent attestations.
+// This is the ALCOA+ integrity guarantee (FDA 21 CFR Part 11).
 // Record appends an audit entry with hash-chained attestation.
 // Each entry's attestation includes the previous entry's hash,
 // creating a tamper-proof chain where modifying any historical

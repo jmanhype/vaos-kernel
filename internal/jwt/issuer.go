@@ -15,6 +15,9 @@ import (
 // tokenSeq is an atomic counter to ensure unique TokenIDs even within the same nanosecond.
 var tokenSeq int64
 
+// [DEMO-BOOKMARK-1] 60-SECOND JWT TTL
+// The verifier (line 124) also enforces: exp - iat MUST equal 60s exactly.
+// No standing privileges — token is useless after one minute.
 const tokenTTL = 60 * time.Second
 
 // Issuer signs and verifies ephemeral intent-scoped JWTs.

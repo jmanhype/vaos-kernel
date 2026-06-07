@@ -62,6 +62,10 @@ func (Hasher) HashIntent(intent models.IntentRequest) (string, error) {
 		return "", err
 	}
 
+// [DEMO-BOOKMARK-2] INTENT FINGERPRINTING
+// Canonicalize (agent_id + action + resource + sorted params) then BLAKE2b-256.
+// Deterministic: same intent always produces the same hash.
+// This hash is what gets embedded in the JWT — binding the token to ONE action.
 	sum := blake2b.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }
