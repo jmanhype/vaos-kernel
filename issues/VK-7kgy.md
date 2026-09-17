@@ -6,8 +6,8 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T22:08:35Z
-content_hash: "sha256:c63ee8338bff79be4ef5b979d322e85b89b849366225ded4a19c9fd5068f9f69"
+updated_at: 2026-09-17T23:01:23Z
+content_hash: "sha256:71eaa440d2f9b0e36329787270da23a54a1388f10d5d87e70ed8c5d52cce8a94"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 labels: [delivered]
@@ -68,6 +68,22 @@ Commit: `81d3289 feat: harden agentic jwt runtime`
 Pushed branch: `origin/story/VK-7kgy`
 
 ## nd_contract
+status: in_progress
+
+### evidence
+- 2026-09-17: initialized `/Users/speed/vaos-kernel` with Paivot shared-vault mode.
+- 2026-09-17: codebase-memory project `Users-speed-vaos-kernel` reindexed at generation 2026-09-17T19:59:33Z with 943 nodes and 3,597 edges.
+- 2026-09-17: existing P0/P1 implementation evidence is in `/Users/speed/Jev/vaos-auth51-jev-fit/evidence/vaos-kernel-agenticjwt-p1-*`.
+
+### proof
+- [ ] AC #1: persistence survives restart.
+- [ ] AC #2: scoped OAuth transport is enforced.
+- [ ] AC #3: standalone verifier validates JWKS/kid/signature/claims.
+- [ ] AC #4: registration revocation invalidates tokens.
+- [ ] AC #5: signing-key rotation supports overlap.
+- [ ] AC #6: race/full tests, smoke test, build, and credential scan pass.
+
+## nd_contract
 status: delivered
 
 ### evidence
@@ -119,22 +135,6 @@ status: delivered
 - [x] AC #4: registration revocation invalidates future mints and existing Authority-verified tokens — `TestRegistrationRevocationInvalidatesMintAndExistingTokens`.
 - [x] AC #5: signing-key rotation retains verification overlap — `TestSigningKeyRotationKeepsPreviousVerificationOverlap`.
 - [x] AC #6: race/full tests, live smoke, build, and credential scan pass — evidence files and hashes above.
-
-## nd_contract
-status: in_progress
-
-### evidence
-- 2026-09-17: initialized `/Users/speed/vaos-kernel` with Paivot shared-vault mode.
-- 2026-09-17: codebase-memory project `Users-speed-vaos-kernel` reindexed at generation 2026-09-17T19:59:33Z with 943 nodes and 3,597 edges.
-- 2026-09-17: existing P0/P1 implementation evidence is in `/Users/speed/Jev/vaos-auth51-jev-fit/evidence/vaos-kernel-agenticjwt-p1-*`.
-
-### proof
-- [ ] AC #1: persistence survives restart.
-- [ ] AC #2: scoped OAuth transport is enforced.
-- [ ] AC #3: standalone verifier validates JWKS/kid/signature/claims.
-- [ ] AC #4: registration revocation invalidates tokens.
-- [ ] AC #5: signing-key rotation supports overlap.
-- [ ] AC #6: race/full tests, smoke test, build, and credential scan pass.
 
 ## History
 - 2026-09-17T20:07:16Z status: open -> in_progress
