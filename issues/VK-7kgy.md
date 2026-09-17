@@ -6,8 +6,8 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T23:01:23Z
-content_hash: "sha256:71eaa440d2f9b0e36329787270da23a54a1388f10d5d87e70ed8c5d52cce8a94"
+updated_at: 2026-09-17T23:12:55Z
+content_hash: "sha256:837c77e47ad60774ac161a68ce7ad8cb06a55479820f5f6bdf391a440c5aafcd"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 labels: [delivered]
@@ -66,6 +66,13 @@ Commit SHA: 81d3289f7b78476fe882ecdf1042611fb4ba295a
 Commit: `81d3289 feat: harden agentic jwt runtime`
 
 Pushed branch: `origin/story/VK-7kgy`
+Pull request: https://github.com/jmanhype/vaos-kernel/pull/1
+
+PR title: Harden Agentic JWT persistence, OAuth transport, and verifier
+
+PR branch: `story/VK-7kgy` -> `master`
+
+GitHub CI: both required `test` checks passed.
 
 ## nd_contract
 status: in_progress
