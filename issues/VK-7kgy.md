@@ -6,8 +6,8 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T21:00:07Z
-content_hash: "sha256:2700e3a5db07ba7e95753cb08883433f8b3111ba3ddb1cf220a5fd84d47681c6"
+updated_at: 2026-09-17T22:08:35Z
+content_hash: "sha256:c63ee8338bff79be4ef5b979d322e85b89b849366225ded4a19c9fd5068f9f69"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 labels: [delivered]
@@ -61,6 +61,11 @@ RED-PROGRESS: Standalone resource-server verifier tests were added in `.claude/w
 [x] AC #4: registration revocation invalidates tokens where required.
 [x] AC #5: signing-key rotation supports overlap.
 [x] AC #6: all specified gates pass.
+Commit SHA: 81d3289f7b78476fe882ecdf1042611fb4ba295a
+
+Commit: `81d3289 feat: harden agentic jwt runtime`
+
+Pushed branch: `origin/story/VK-7kgy`
 
 ## nd_contract
 status: delivered
