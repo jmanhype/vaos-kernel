@@ -7,7 +7,7 @@ type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
 updated_at: 2026-09-17T20:08:00Z
-content_hash: "sha256:a7b11cd4048cf280893d52d110908a1bbc15341ad8ed5d2385da92f4ba0c92a4"
+content_hash: "sha256:8bb6a873413fc6eac1020a843320fdefccf80cf1d0c26999ea6c0391098455bb"
 assignee: dev-VK-7kgy
 ---
 
@@ -67,3 +67,6 @@ status: in_progress
 
 
 ## Comments
+
+### 2026-09-17T20:08:00Z speed
+loop: reset orphaned in_progress to open (no developer worktree found; prior session presumed dead)
