@@ -10,6 +10,7 @@ updated_at: 2026-09-17T20:56:27Z
 content_hash: "sha256:30ca8491fcd223545dc6071c5261c018067d5f4369543485860a0eeaf5b9518d"
 parent: VK-oidn
 assignee: dev-VK-7kgy
+labels: [delivered]
 ---
 
 ## Description
