@@ -10,7 +10,7 @@ updated_at: 2026-09-17T23:12:55Z
 content_hash: "sha256:7fb72db33702336800ed044f7cf4a357d16187a66ead2ed1a7fa790554fce304"
 parent: VK-oidn
 assignee: dev-VK-7kgy
-labels: [delivered]
+labels: [delivered, accepted]
 closed_at: 2026-09-17T23:12:55Z
 close_reason: "Accepted: delivery proof passes 9/9; all six acceptance criteria are evidenced; local and GitHub CI gates pass."
 ---
