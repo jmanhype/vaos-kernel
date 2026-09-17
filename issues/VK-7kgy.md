@@ -7,7 +7,7 @@ type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
 updated_at: 2026-09-17T20:07:16Z
-content_hash: "sha256:14e60d68be1b5fccd67bb1414d6c32ba7d8c6467436c26e0394e8da5c3c84440"
+content_hash: "sha256:184df47afcf24ec4c749d812978e3f502c77780427f04c8855dc48b4f9e64f22"
 assignee: dev-VK-7kgy
 ---
 
@@ -42,7 +42,21 @@ Harden the implemented Agentic JWT P0/P1 slice in `/Users/speed/vaos-kernel` for
 
 
 ## Notes
+## nd_contract
+status: in_progress
 
+### evidence
+- 2026-09-17: initialized `/Users/speed/vaos-kernel` with Paivot shared-vault mode.
+- 2026-09-17: codebase-memory project `Users-speed-vaos-kernel` reindexed at generation 2026-09-17T19:59:33Z with 943 nodes and 3,597 edges.
+- 2026-09-17: existing P0/P1 implementation evidence is in `/Users/speed/Jev/vaos-auth51-jev-fit/evidence/vaos-kernel-agenticjwt-p1-*`.
+
+### proof
+- [ ] AC #1: persistence survives restart.
+- [ ] AC #2: scoped OAuth transport is enforced.
+- [ ] AC #3: standalone verifier validates JWKS/kid/signature/claims.
+- [ ] AC #4: registration revocation invalidates tokens.
+- [ ] AC #5: signing-key rotation supports overlap.
+- [ ] AC #6: race/full tests, smoke test, build, and credential scan pass.
 
 ## History
 - 2026-09-17T20:07:16Z status: open -> in_progress
