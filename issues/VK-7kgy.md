@@ -1,13 +1,14 @@
 ---
 id: VK-7kgy
 title: "Harden VAOS Agentic JWT P1 persistence, OAuth transport, and verifier"
-status: open
+status: in_progress
 priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
 updated_at: 2026-09-17T20:07:16Z
-content_hash: "sha256:34e58df235c028294af1f06fa659ddaad3b03150990da8a3c79cc23e461450b2"
+content_hash: "sha256:14e60d68be1b5fccd67bb1414d6c32ba7d8c6467436c26e0394e8da5c3c84440"
+assignee: dev-VK-7kgy
 ---
 
 ## Description
@@ -44,7 +45,8 @@ Harden the implemented Agentic JWT P0/P1 slice in `/Users/speed/vaos-kernel` for
 
 
 ## History
-
+- 2026-09-17T20:07:16Z status: open -> in_progress
+- 2026-09-17T20:07:16Z claimed by dev-VK-7kgy
 
 ## Links
 
