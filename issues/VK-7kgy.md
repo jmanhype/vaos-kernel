@@ -6,8 +6,8 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T23:12:56Z
-content_hash: "sha256:683467f6bed53eeac87879f6bc422941fd8d097bfcc4b83f35226f932accd688"
+updated_at: 2026-09-17T23:13:20Z
+content_hash: "sha256:22d2c26f0658da216ef4508914db3d40ba9373d0221e75267a1f1ab364f09875"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 labels: [accepted]
@@ -78,16 +78,6 @@ GitHub CI: both required `test` checks passed.
 
 
 ## nd_contract
-status: accepted
-
-### evidence
-- PM closeout applied via pvg story accept on 2026-09-17.
-
-### proof
-- [x] Story closed after accepted label was applied.
-
-
-## nd_contract
 status: in_progress
 
 ### evidence
@@ -155,6 +145,15 @@ status: delivered
 - [x] AC #4: registration revocation invalidates future mints and existing Authority-verified tokens — `TestRegistrationRevocationInvalidatesMintAndExistingTokens`.
 - [x] AC #5: signing-key rotation retains verification overlap — `TestSigningKeyRotationKeepsPreviousVerificationOverlap`.
 - [x] AC #6: race/full tests, live smoke, build, and credential scan pass — evidence files and hashes above.
+
+## nd_contract
+status: accepted
+
+### evidence
+- PM closeout applied via pvg story accept on 2026-09-17.
+
+### proof
+- [x] Story closed after accepted label was applied.
 
 ## History
 - 2026-09-17T20:07:16Z status: open -> in_progress
