@@ -6,9 +6,10 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T20:08:00Z
-content_hash: "sha256:8bb6a873413fc6eac1020a843320fdefccf80cf1d0c26999ea6c0391098455bb"
+updated_at: 2026-09-17T20:08:16Z
+content_hash: "sha256:7a9509b7c0dd3f624bcc924812b25911389e814212cc1785dd2434c42c044b2e"
 assignee: dev-VK-7kgy
+parent: VK-oidn
 ---
 
 ## Description
@@ -64,7 +65,7 @@ status: in_progress
 - 2026-09-17T20:08:00Z status: in_progress -> open
 
 ## Links
-
+- Parent: [[VK-oidn]]
 
 ## Comments
 
