@@ -7,7 +7,7 @@ type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
 updated_at: 2026-09-17T20:09:08Z
-content_hash: "sha256:c8e65ea79e761d0577540901dd35fcd46e3457d4a631374a923f7910dbe0fd65"
+content_hash: "sha256:cd9c85e74b3e497ffbc22b7181b29b35804b585d1f921d689529725748ff5e32"
 assignee: dev-VK-7kgy
 parent: VK-oidn
 ---
@@ -73,4 +73,7 @@ status: in_progress
 ## Comments
 
 ### 2026-09-17T20:08:00Z speed
+loop: reset orphaned in_progress to open (no developer worktree found; prior session presumed dead)
+
+### 2026-09-17T20:09:08Z speed
 loop: reset orphaned in_progress to open (no developer worktree found; prior session presumed dead)
