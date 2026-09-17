@@ -1,13 +1,13 @@
 ---
 id: VK-7kgy
 title: "Harden VAOS Agentic JWT P1 persistence, OAuth transport, and verifier"
-status: in_progress
+status: open
 priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T20:07:16Z
-content_hash: "sha256:184df47afcf24ec4c749d812978e3f502c77780427f04c8855dc48b4f9e64f22"
+updated_at: 2026-09-17T20:08:00Z
+content_hash: "sha256:a7b11cd4048cf280893d52d110908a1bbc15341ad8ed5d2385da92f4ba0c92a4"
 assignee: dev-VK-7kgy
 ---
 
@@ -61,6 +61,7 @@ status: in_progress
 ## History
 - 2026-09-17T20:07:16Z status: open -> in_progress
 - 2026-09-17T20:07:16Z claimed by dev-VK-7kgy
+- 2026-09-17T20:08:00Z status: in_progress -> open
 
 ## Links
 
