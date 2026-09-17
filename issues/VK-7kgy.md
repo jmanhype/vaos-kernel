@@ -7,7 +7,7 @@ type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
 updated_at: 2026-09-17T23:12:56Z
-content_hash: "sha256:7fb72db33702336800ed044f7cf4a357d16187a66ead2ed1a7fa790554fce304"
+content_hash: "sha256:683467f6bed53eeac87879f6bc422941fd8d097bfcc4b83f35226f932accd688"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 labels: [accepted]
@@ -75,6 +75,17 @@ PR title: Harden Agentic JWT persistence, OAuth transport, and verifier
 PR branch: `story/VK-7kgy` -> `master`
 
 GitHub CI: both required `test` checks passed.
+
+
+## nd_contract
+status: accepted
+
+### evidence
+- PM closeout applied via pvg story accept on 2026-09-17.
+
+### proof
+- [x] Story closed after accepted label was applied.
+
 
 ## nd_contract
 status: in_progress
