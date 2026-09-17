@@ -6,8 +6,8 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T20:25:26Z
-content_hash: "sha256:5e1014c9edbba92672851c4edd207635839cc5c3921f6ca0c15d0059a4bc176a"
+updated_at: 2026-09-17T20:56:27Z
+content_hash: "sha256:b9982fec7ed4fdd3c20a58f80ec1087177762d44a10a75bcce68deb4903b70dc"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 ---
@@ -44,6 +44,48 @@ Harden the implemented Agentic JWT P0/P1 slice in `/Users/speed/vaos-kernel` for
 
 ## Notes
 RED-PROGRESS: Standalone resource-server verifier tests were added in `.claude/worktrees/dev-VK-7kgy/internal/agenticresource/verifier_test.go`. They currently define the expected JWKS/kid/Ed25519/signature/claims/proof middleware behavior; implementation is pending. Compiled debug binary `kernel` was removed.
+## Implementation Evidence
+
+Summary: Implemented durable Agentic JWT registry restore, runtime scoped OAuth client-credential transport, standalone resource-server verification, registration revocation, and signing-key rotation in story worktree `/Users/speed/vaos-kernel/.claude/worktrees/dev-VK-7kgy`.
+
+Commit SHA: 312c78fdac8a1acd06f535058ccd5fcd5b41eb52 (story branch HEAD; implementation files are present but not committed because commit/push authorization has not been given).
+
+Evidence directory: `/Users/speed/Jev/vaos-auth51-jev-fit/evidence/vk-7kgy-20260917`
+
+Commands run:
+- `git diff --check`
+- `go vet ./cmd/kernel ./internal/agenticjwt ./internal/agenticresource`
+- `go test -race ./cmd/kernel ./internal/agenticjwt`
+- `go test ./...`
+- `go build -o /tmp/vk-7kgy-kernel-final ./cmd/kernel`
+- `python3 scripts/agentic_jwt_smoke.py`
+- `gitleaks detect --source . --no-git --redact --report-format json --report-path ... --gitleaks-ignore-path ... --exit-code 99`
+
+## CI/Test Results
+
+- Race gate: PASS (`race-test.txt`, SHA-256 `bcf7cfd81847e3dd67b32c08f148ed53d241736db551680457cdc160d4d86751`)
+- Full Go suite: PASS (`full-test.txt`, SHA-256 `941eb761b5dc92d066b3e4f1e07c68d828d50b71bd2355189cc9d4f23f9be26f`)
+- Build: PASS, exit 0 (`build.txt`, empty-output SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`)
+- Live mounted smoke: PASS with `registry_restart_persisted: true` (`smoke.json`, SHA-256 `032bfad462b4d20bfa178f96fb40e36a4fcdb6d9f598db823dcd48a4b8606dae`)
+- Credential scan: PASS, 1.04 MB scanned, no leaks after explicit allowlist of two redacted example JWTs in pre-existing IETF draft snapshots (`credential-scan.txt`, SHA-256 `ccf7b9fc2cfd282342b26415316ec771e7f644108dbbfd31aa4462ac1e8f26bd`)
+- Static gates: PASS (`static-gates.txt`, SHA-256 `176342ef0dbb59ab11b2da236df8e20c25eb844b1200dac7415c97d0a05850c7`)
+
+## nd_contract
+status: delivered
+
+### evidence
+- Files on disk in `/Users/speed/vaos-kernel/.claude/worktrees/dev-VK-7kgy`: `cmd/kernel/agentic.go`, `cmd/kernel/agentic_test.go`, `cmd/kernel/main.go`, `.env.example`, `docs/AGENTIC_JWT_P0.md`, `scripts/agentic_jwt_smoke.py`, `internal/agenticjwt/*`, and `internal/agenticresource/verifier.go`.
+- Final evidence and `SHA256SUMS` are stored in `/Users/speed/Jev/vaos-auth51-jev-fit/evidence/vk-7kgy-20260917`.
+- OAuth client IDs are distinct and duplicate client secrets fail closed.
+- The live smoke obtains scoped tokens, rejects the legacy shared bearer secret, restarts the kernel with the same registry path, and mints a distinct intent token from restored state.
+
+### proof
+- [x] AC #1: persistence survives restart — `TestAgenticJWTRuntimePersistsRegistrationsAcrossReopen`, `TestFileRegistryPersistsAcrossReopen`, and live `registry_restart_persisted: true`.
+- [x] AC #2: scoped OAuth transport is enforced — `TestScopedOAuthClientCredentialsTransport`, `TestClientCredentialsEndpointFailsClosed`, `TestTransportClientsRejectSharedSecrets`, `TestMountAgenticJWT`, and live shared-secret rejection.
+- [x] AC #3: standalone verifier validates JWKS/kid/signature/claims/proof — `TestStandaloneVerifierValidatesJWKSSignatureClaimsAndAgentProof`, `TestStandaloneVerifierRejectsTamperingAndWrongProof`, `TestStandaloneVerifierRejectsMissingIntentClaims`, and middleware tests.
+- [x] AC #4: registration revocation invalidates future mints and existing Authority-verified tokens — `TestRegistrationRevocationInvalidatesMintAndExistingTokens`.
+- [x] AC #5: signing-key rotation retains verification overlap — `TestSigningKeyRotationKeepsPreviousVerificationOverlap`.
+- [x] AC #6: race/full tests, live smoke, build, and credential scan pass — evidence files and hashes above.
 
 ## nd_contract
 status: in_progress
