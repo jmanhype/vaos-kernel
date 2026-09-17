@@ -6,8 +6,8 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T20:25:25Z
-content_hash: "sha256:f7cc2e99ea9102de82eb5cd740248bcf34bab34b726eeb1de0826c4b0fab0743"
+updated_at: 2026-09-17T20:25:26Z
+content_hash: "sha256:5e1014c9edbba92672851c4edd207635839cc5c3921f6ca0c15d0059a4bc176a"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 ---
@@ -43,6 +43,8 @@ Harden the implemented Agentic JWT P0/P1 slice in `/Users/speed/vaos-kernel` for
 
 
 ## Notes
+RED-PROGRESS: Standalone resource-server verifier tests were added in `.claude/worktrees/dev-VK-7kgy/internal/agenticresource/verifier_test.go`. They currently define the expected JWKS/kid/Ed25519/signature/claims/proof middleware behavior; implementation is pending. Compiled debug binary `kernel` was removed.
+
 ## nd_contract
 status: in_progress
 
