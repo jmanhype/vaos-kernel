@@ -6,8 +6,8 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-17T20:56:27Z
-content_hash: "sha256:b1036a090f112ecc5ea1ed4ee2c89204ba297a555476c44dd45a6b5e2d4786a2"
+updated_at: 2026-09-17T21:00:07Z
+content_hash: "sha256:2700e3a5db07ba7e95753cb08883433f8b3111ba3ddb1cf220a5fd84d47681c6"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 labels: [delivered]
@@ -45,7 +45,22 @@ Harden the implemented Agentic JWT P0/P1 slice in `/Users/speed/vaos-kernel` for
 
 ## Notes
 RED-PROGRESS: Standalone resource-server verifier tests were added in `.claude/worktrees/dev-VK-7kgy/internal/agenticresource/verifier_test.go`. They currently define the expected JWKS/kid/Ed25519/signature/claims/proof middleware behavior; implementation is pending. Compiled debug binary `kernel` was removed.
+### CI/Test Results
 
+- `go test -race ./cmd/kernel ./internal/agenticjwt`: PASS
+- `go test ./...`: PASS
+- `go build -o /tmp/vk-7kgy-kernel-final ./cmd/kernel`: PASS
+- `python3 scripts/agentic_jwt_smoke.py`: PASS, including registry restart persistence
+- redacted `gitleaks detect --no-git`: PASS with two documented pre-existing draft-example allowlist entries
+
+### AC Verification
+
+[x] AC #1: persistence survives restart.
+[x] AC #2: scoped OAuth transport is enforced.
+[x] AC #3: standalone verifier validates JWKS/kid/signature/claims/proof.
+[x] AC #4: registration revocation invalidates tokens where required.
+[x] AC #5: signing-key rotation supports overlap.
+[x] AC #6: all specified gates pass.
 
 ## nd_contract
 status: delivered
