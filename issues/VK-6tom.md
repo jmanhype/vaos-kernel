@@ -1,13 +1,14 @@
 ---
 id: VK-6tom
 title: "Pin VAOS CI runner and upgrade GitHub Actions"
-status: open
+status: in_progress
 priority: 3
 type: chore
 created_at: 2026-09-18T01:14:09Z
 created_by: speed
-updated_at: 2026-09-18T01:15:28Z
-content_hash: "sha256:b082258515547f84b813071110a7e03adfa7a5c14c6d41a3f3df55770a095eb8"
+updated_at: 2026-09-18T01:35:48Z
+content_hash: "sha256:63464d355c8ea683866acd1d3f8819ee5f1b0d7c75a380df9b3636466cd82a75"
+assignee: dev-VK-6tom
 ---
 
 ## Description
@@ -47,7 +48,8 @@ The workflow should be made explicit before the runner image changes automatical
 
 
 ## History
-
+- 2026-09-18T01:35:48Z status: open -> in_progress
+- 2026-09-18T01:35:48Z claimed by dev-VK-6tom
 
 ## Links
 
