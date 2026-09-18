@@ -6,8 +6,8 @@ priority: 3
 type: chore
 created_at: 2026-09-18T01:14:09Z
 created_by: speed
-updated_at: 2026-09-18T01:41:19Z
-content_hash: "sha256:9a6e7605d0ce47dfc1d386ebab9c1e9c812e648086dcfe59d161e17a3afe860a"
+updated_at: 2026-09-18T01:42:12Z
+content_hash: "sha256:7d3188657e9d2df38099e5a4e6076aba3fd28bf09a4300d0fb62541cfd9a447d"
 assignee: dev-VK-6tom
 labels: [delivered]
 ---
@@ -48,16 +48,6 @@ The workflow should be made explicit before the runner image changes automatical
 ## Notes
 
 
-## nd_contract
-status: delivered
-
-### evidence
-- Transitioned via pvg story deliver on 2026-09-17.
-
-### proof
-- [ ] Developer evidence block must remain authoritative above this contract.
-
-
 ## Implementation Evidence
 
 Summary: Pinned VAOS CI to `ubuntu-24.04` and upgraded `actions/checkout` and `actions/setup-go` to their maintained v7 majors in story worktree `/Users/speed/vaos-kernel/.claude/worktrees/dev-VK-6tom`.
@@ -95,6 +85,15 @@ Commands run:
 [x] AC #2: CI uses maintained checkout/setup-go v7 actions without Node.js 20 deprecation warnings.
 [x] AC #3: `go mod tidy`, dependency-diff check, `go build ./...`, and `go test ./...` pass.
 [x] AC #4: push and pull_request CI runs pass on `ubuntu-24.04` with zero job annotations.
+
+## nd_contract
+status: delivered
+
+### evidence
+- Transitioned via pvg story deliver on 2026-09-17.
+
+### proof
+- [ ] Developer evidence block must remain authoritative above this contract.
 
 ## History
 - 2026-09-18T01:35:48Z status: open -> in_progress
