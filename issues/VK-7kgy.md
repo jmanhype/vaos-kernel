@@ -6,8 +6,8 @@ priority: 1
 type: feature
 created_at: 2026-09-17T20:07:16Z
 created_by: speed
-updated_at: 2026-09-18T01:09:25Z
-content_hash: "sha256:dc540f38c0d2a1c9ec2f90b9da04767e579e020f5fc629a70d4a1587ad149ea6"
+updated_at: 2026-09-18T01:09:38Z
+content_hash: "sha256:656927cee14dc1ad656e8a76d02d569e7dcbed88b867197b7b7aeefd78185673"
 parent: VK-oidn
 assignee: dev-VK-7kgy
 labels: [accepted]
@@ -75,6 +75,15 @@ PR title: Harden Agentic JWT persistence, OAuth transport, and verifier
 PR branch: `story/VK-7kgy` -> `master`
 
 GitHub CI: both required `test` checks passed.
+Merged SHA: b97db595773311a0b04bf461bb6f47929c99138b
+
+PR: https://github.com/jmanhype/vaos-kernel/pull/1
+
+PR state: MERGED
+
+Master CI run: https://github.com/jmanhype/vaos-kernel/actions/runs/35294062174
+
+Master CI result: SUCCESS
 Merged SHA: b97db595773311a0b04bf461bb6f47929c99138b
 
 PR: https://github.com/jmanhype/vaos-kernel/pull/1
