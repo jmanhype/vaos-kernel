@@ -297,19 +297,32 @@ func main() {
 	if apiSecret == "" {
 		log.Printf("WARNING: VAOS_API_SECRET not set — HTTP API endpoints are unauthenticated (dev mode)")
 	}
-	requireAuth := func(next http.HandlerFunc) http.HandlerFunc {
+	requireBearer := func(secret string, next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			if apiSecret != "" {
+			if secret != "" {
 				auth := r.Header.Get("Authorization")
 				token := strings.TrimPrefix(auth, "Bearer ")
 				if !strings.HasPrefix(auth, "Bearer ") ||
-					subtle.ConstantTimeCompare([]byte(token), []byte(apiSecret)) != 1 {
+					subtle.ConstantTimeCompare([]byte(token), []byte(secret)) != 1 {
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
 				}
 			}
 			next(w, r)
 		}
+	}
+	requireAuth := func(next http.HandlerFunc) http.HandlerFunc {
+		return requireBearer(apiSecret, next)
+	}
+
+	agenticAuthority, err := newAgenticJWTRuntime(agenticJWTEnvironment(), time.Now, ledger)
+	if err != nil {
+		log.Fatalf("create agentic jwt authority: %v", err)
+	}
+	if agenticAuthority == nil {
+		log.Printf("Agentic JWT P0 endpoints disabled (set VAOS_AGENTIC_JWT_ENABLED=true to enable)")
+	} else {
+		log.Printf("Agentic JWT P0 endpoints enabled behind scoped OAuth client credentials")
 	}
 
 	// Graceful shutdown context
@@ -338,6 +351,7 @@ func main() {
 
 	// WebSocket + HTTP server
 	mux := http.NewServeMux()
+	mountAgenticJWT(mux, agenticAuthority)
 	mux.HandleFunc("/ws", wsServer.HandleWebSocket)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
