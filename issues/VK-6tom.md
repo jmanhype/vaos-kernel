@@ -6,8 +6,8 @@ priority: 3
 type: chore
 created_at: 2026-09-18T01:14:09Z
 created_by: speed
-updated_at: 2026-09-18T01:35:48Z
-content_hash: "sha256:63464d355c8ea683866acd1d3f8819ee5f1b0d7c75a380df9b3636466cd82a75"
+updated_at: 2026-09-18T01:41:19Z
+content_hash: "sha256:7e48fb88e7b9973ac78893517b414acc108d3816e70fb5eb6839c55ae76af41e"
 assignee: dev-VK-6tom
 ---
 
@@ -45,7 +45,43 @@ The workflow should be made explicit before the runner image changes automatical
 
 
 ## Notes
+## Implementation Evidence
 
+Summary: Pinned VAOS CI to `ubuntu-24.04` and upgraded `actions/checkout` and `actions/setup-go` to their maintained v7 majors in story worktree `/Users/speed/vaos-kernel/.claude/worktrees/dev-VK-6tom`.
+
+Commit SHA: d7ac45ee0b5272994f476e14f9857abc344f9dc8
+
+Pull request: https://github.com/jmanhype/vaos-kernel/pull/2
+
+Evidence directory: `/Users/speed/Jev/vaos-auth51-jev-fit/evidence/vk-6tom-20260918`
+
+Commands run:
+- `grep` configuration assertions for `ubuntu-24.04`, `actions/checkout@v7`, and `actions/setup-go@v7`
+- Python YAML parse plus expected job assertions
+- `go mod tidy`
+- `git diff --exit-code -- go.mod go.sum`
+- `go build ./...`
+- `go test ./...`
+- staged redacted `gitleaks protect --staged`
+- GitHub push and pull_request CI verification
+- GitHub Actions job annotation verification
+
+### CI/Test Results
+
+- Configuration gates: PASS (`configuration-gates.txt`, SHA-256 `f77ebbc9b1517ed5ebbf0d053d1a753dbecc6e71a92b51c2fc6cf2093c7eacbb`)
+- Local CI: PASS (`local-ci.txt`, SHA-256 `834946cac603e6f84125abafde15e8f5df5d0a6826aa63d9e45a07fdfb5792ff`)
+- Action metadata: checkout v7.0.1 and setup-go v7.0.0 both declare Node.js 24 (`action-metadata.txt`, SHA-256 `707c75ba29135ff79894d66ca04f5160c2f04e58cae56354c92bfe549120e3c2`)
+- PR CI: push and pull_request runs completed successfully for commit `d7ac45ee0b5272994f476e14f9857abc344f9dc8` (`pr-ci.json`, SHA-256 `633211c4ea0ecba593518cadbc6ae1c6782cf8efa56a5f27d149865330cb86ec`)
+- Runner verification: both jobs report the `ubuntu-24.04` label.
+- Warning verification: both job annotation arrays are empty.
+- Staged credential scan: PASS, no leaks.
+
+### AC Verification
+
+[x] AC #1: CI uses the explicit supported `ubuntu-24.04` runner image.
+[x] AC #2: CI uses maintained checkout/setup-go v7 actions without Node.js 20 deprecation warnings.
+[x] AC #3: `go mod tidy`, dependency-diff check, `go build ./...`, and `go test ./...` pass.
+[x] AC #4: push and pull_request CI runs pass on `ubuntu-24.04` with zero job annotations.
 
 ## History
 - 2026-09-18T01:35:48Z status: open -> in_progress
