@@ -7,7 +7,7 @@ type: chore
 created_at: 2026-09-18T01:14:09Z
 created_by: speed
 updated_at: 2026-09-18T01:41:19Z
-content_hash: "sha256:8edc2e2d6757c691ef0a6358672ac261648b0d2f600327d6c4ed69cf75c38dd3"
+content_hash: "sha256:9a6e7605d0ce47dfc1d386ebab9c1e9c812e648086dcfe59d161e17a3afe860a"
 assignee: dev-VK-6tom
 labels: [delivered]
 ---
@@ -46,6 +46,18 @@ The workflow should be made explicit before the runner image changes automatical
 
 
 ## Notes
+
+
+## nd_contract
+status: delivered
+
+### evidence
+- Transitioned via pvg story deliver on 2026-09-17.
+
+### proof
+- [ ] Developer evidence block must remain authoritative above this contract.
+
+
 ## Implementation Evidence
 
 Summary: Pinned VAOS CI to `ubuntu-24.04` and upgraded `actions/checkout` and `actions/setup-go` to their maintained v7 majors in story worktree `/Users/speed/vaos-kernel/.claude/worktrees/dev-VK-6tom`.
