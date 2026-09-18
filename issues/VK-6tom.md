@@ -9,6 +9,7 @@ created_by: speed
 updated_at: 2026-09-18T01:41:19Z
 content_hash: "sha256:8edc2e2d6757c691ef0a6358672ac261648b0d2f600327d6c4ed69cf75c38dd3"
 assignee: dev-VK-6tom
+labels: [delivered]
 ---
 
 ## Description
